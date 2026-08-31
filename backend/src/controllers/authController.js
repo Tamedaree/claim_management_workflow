@@ -1,0 +1,268 @@
+import bcrypt from "bcryptjs";
+import prisma from "../config/db.js";
+import { generateToken } from "../utils/generateToken.js";
+import ApiError from "../utils/ApiError.js";
+
+// @desc    Register new user
+// @route   POST /api/auth/register
+export const register = async (req, res, next) => {
+  try {
+    const {
+      email,
+      password,
+      role,
+      department,
+      phone,
+      position_title,
+      work_location,
+    } = req.body;
+
+    if (!email || !password) {
+      throw new ApiError(400, "Email and password are required");
+    }
+
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+    if (existingUser) {
+      throw new ApiError(400, "User already exists with this email");
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    const user = await prisma.user.create({
+      data: {
+        email,
+        password: hashedPassword,
+        role: role || "claim_adjuster",
+        department,
+        phone,
+        position_title,
+        work_location,
+      },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        department: true,
+        phone: true,
+        position_title: true,
+        work_location: true,
+        is_active: true,
+        createdAt: true,
+      },
+    });
+
+    const token = generateToken(user.id);
+
+    res.status(201).json({
+      success: true,
+      token,
+      user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Login user
+// @route   POST /api/auth/login
+export const login = async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      throw new ApiError(400, "Email and password are required");
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    if (!user || !(await bcrypt.compare(password, user.password))) {
+      throw new ApiError(401, "Invalid email or password");
+    }
+
+    if (!user.is_active) {
+      throw new ApiError(403, "Your account is deactivated");
+    }
+
+    const token = generateToken(user.id);
+
+    res.json({
+      success: true,
+      token,
+      user: {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+        phone: user.phone,
+        position_title: user.position_title,
+        work_location: user.work_location,
+        profile_image_url: user.profile_image_url,
+        is_active: user.is_active,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Get current logged in user
+// @route   GET /api/auth/me
+export const getMe = async (req, res, next) => {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        department: true,
+        phone: true,
+        position_title: true,
+        work_location: true,
+        work_location_type: true,
+        profile_image_url: true,
+        is_active: true,
+        createdAt: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Update profile
+// @route   PUT /api/auth/update-profile
+export const updateProfile = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { phone, position_title, work_location, department } = req.body;
+
+    const data = {};
+    if (phone !== undefined) data.phone = phone;
+    if (position_title !== undefined) data.position_title = position_title;
+    if (work_location !== undefined) data.work_location = work_location;
+    if (department !== undefined) data.department = department;
+
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data,
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        department: true,
+        work_location: true,
+        work_location_type: true,
+        phone: true,
+        position_title: true,
+        is_active: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Profile updated successfully",
+      user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+// @desc    Change password
+// @route   PUT /api/auth/change-password
+export const changePassword = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const { currentPassword, newPassword } = req.body;
+
+    if (!currentPassword || !newPassword) {
+      throw new ApiError(400, "Current password and new password are required");
+    }
+
+    if (newPassword.length < 8) {
+      throw new ApiError(400, "New password must be at least 8 characters");
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    if (!user) {
+      throw new ApiError(404, "User not found");
+    }
+
+    const isMatch = await bcrypt.compare(currentPassword, user.password);
+    if (!isMatch) {
+      throw new ApiError(400, "Current password is incorrect");
+    }
+
+    if (currentPassword === newPassword) {
+      throw new ApiError(
+        400,
+        "New password must be different from current password",
+      );
+    }
+
+    const hashed = await bcrypt.hash(newPassword, 12);
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: hashed },
+    });
+
+    res.json({
+      success: true,
+      message: "Password changed successfully",
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const uploadProfileImage = async (req, res, next) => {
+  try {
+    console.log("========== PROFILE PHOTO ==========");
+    console.log("User:", req.user);
+    console.log("File:", req.file);
+    console.log("Body:", req.body);
+    console.log("===================================");
+    if (!req.file) {
+      throw new ApiError(400, "No image uploaded");
+    }
+
+    const imageUrl = `/uploads/profiles/${req.file.filename}`;
+
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { profile_image_url: imageUrl },
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        phone: true,
+        position_title: true,
+        department: true,
+        work_location: true,
+        work_location_type: true,
+        profile_image_url: true,
+        is_active: true,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: "Profile photo updated",
+      user,
+    });
+  } catch (error) {
+    next(error);
+  }
+};

@@ -1,0 +1,475 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ==================== ENUMS ====================
+
+enum Role {
+  admin
+  secretary
+  claim_adjuster
+  gio_claim_adjuster
+  surveyor
+  principal_claim_officer
+  claim_manager
+  gio_claim_manager
+  director
+  chief_of_gio
+  ceo
+}
+
+enum WorkLocationType {
+  Head_Office
+}
+
+enum Department {
+  GIO
+  Claim_Division
+}
+
+enum Gender {
+  Male
+  Female
+}
+
+enum StaffStatus {
+  Active
+  Inactive
+}
+
+enum InsuranceType {
+  Motor
+  Fire
+  Marine
+  Engineering
+  Liability
+  Agriculture
+  Life
+  Health
+  GPA
+  CPM
+  WC
+  Money
+  PVT
+  WMC
+  Bond
+  Aviation
+  Marine_Hull
+  Other
+}
+
+enum OriginatingOfficeType {
+  Service_Center
+  District_Office
+  Kefla_Ager_Branch
+  Border_Branch
+  Head_Office
+}
+
+enum WorkflowType {
+  Claim_Division
+  GIO_Approval
+}
+
+enum GioCaseReason {
+  Standard_Claim_Approval
+  Work_Order_Approval
+  Additional_WO_Approval
+  Claim_Within_15_Days_Case
+  Repair_Approval
+  Total_Loss_Approval
+  Additional_Repair_Approval
+  Payment_Approval
+  Direct_Cash_Payment_Approval
+  Vendor_Payment_Approval
+  Legal_Expense_Approval
+  Advice_Request
+  Legal_Advice
+  Technical_Advice
+  Third_Party_Recovery_Advice
+  Cash_Option_Approval
+  Less_Salvage_Verification
+  Ex_gratia_Claim_Approval
+  Customer_Complaint_Handling
+  Other_Management_Decisions
+}
+
+enum ClaimStatus {
+  // Shared / legacy — still used by draft-save and "request info" flows
+  Draft
+  Submitted
+  Under_Review
+  Returned
+  Escalated
+  Additional_Info_Requested
+
+  // Claim Division granular statuses
+  Notification_Received
+  Claim_Registered
+  Pending_Assignment
+  Assigned_to_Principal_of_Claim
+  Assigned_to_Claim_Adjuster
+  Underwriting_Verification
+  Survey_Requested
+  Survey_in_Progress
+  Damage_Assessment_Completed
+  Principal_Review_Pending
+  Proforma_Collection
+  Tender_Analysis_Pending
+  Garage_Selection_Pending
+  Re_bid_Pending
+  Independent_Assessment_Pending
+  Work_Order_Review_Pending
+  Work_Order_Approved
+  Repair_in_Progress
+  Repair_Approval_Pending
+  Repair_Approved
+  Salvage_Pending
+  Satisfaction_Pending
+  Payment_Preparation
+  Payment_Review_Pending
+  Payment_Approval_Pending
+  Payment_Document_Approved
+  Forwarded_to_Finance
+  Payment_Pending
+  Payment_Completed
+  Claim_Closed
+  Returned_for_Correction
+  Escalated_to_GIO
+
+  // GIO case granular statuses
+  Case_Received
+  Pending_GIO_Assignment
+  Assigned_to_GIO_Claim_Adjuster
+  Document_Review_Pending
+  GIO_Review_In_Progress
+  Claim_Manager_Review_Pending
+  Director_Decision_Pending
+  Chief_of_GIO_Approval_Pending
+  CEO_Approval_Pending
+  Returned_to_Originating_Office
+  Completed
+  Closed
+
+  // Shared terminal statuses
+  Approved
+  Rejected
+}
+
+enum CurrentApproverRole {
+  Principal_of_Claim
+  Claim_Manager
+  GIO_Claim_Manager
+  Director
+  Chief_of_GIO
+  CEO
+  None
+}
+
+enum Priority {
+  Low
+  Medium
+  High
+  Urgent
+}
+
+enum CurrentDepartment {
+  GIO
+  Claim_Division
+}
+
+enum RegistrationType {
+  New_Claim_Notification
+  Subrogation
+  Third_Party_Recovery
+  Reinsurance
+}
+
+enum ThresholdInsuranceType {
+  Motor
+  Fire
+  Marine
+  Engineering
+  Liability
+  Agriculture
+  Life
+  Health
+  GPA
+  Money
+  PVT
+  WMC
+  Bond
+  Aviation
+  Marine_Hull
+  Other
+  All
+}
+
+enum RequiredApproverRole {
+  Principal_of_Claim
+  Claim_Manager
+  GIO_Claim_Manager
+  Director
+  Chief_of_GIO
+  CEO
+}
+
+enum ClaimActionType {
+  Submitted
+  Approved
+  Rejected
+  Returned
+  Escalated
+  Additional_Info_Requested
+  Resubmitted
+  Comment
+  Assigned
+  Forwarded
+}
+
+enum ActivityStatus {
+  Pending
+  In_Progress
+  Completed
+  Skipped
+  On_Hold
+}
+
+enum GarageStatus {
+  Proforma_Requested
+  Proforma_Received
+  Tender_Under_Review
+  Work_Order_Issued
+  Repair_In_Progress
+  Repair_Completed
+  Survey_After_Repair
+  Invoice_Settled
+}
+
+enum NotificationType {
+  approval_required
+  claim_approved
+  claim_rejected
+  claim_returned
+  claim_escalated
+  info_requested
+  general
+}
+
+enum WorkflowStageType {
+  Claim_Division
+  GIO_Approval
+  Both
+}
+
+enum WorkflowDepartment {
+  GIO
+  Claim_Division
+}
+
+// ==================== MODELS ====================
+
+model User {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  password           String
+  role               Role             @default(claim_adjuster)
+  work_location_type WorkLocationType @default(Head_Office)
+  department         Department?
+  work_location      String?
+  phone              String?
+  position_title     String?
+  profile_image_url  String?
+  is_active          Boolean          @default(true)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  notifications      Notification[]
+}
+
+model StaffMember {
+  id                 String           @id @default(cuid())
+  email              String           @unique
+  first_name         String
+  middle_name        String?
+  last_name          String
+  gender             Gender?
+  phone              String?
+  role               Role             @default(claim_adjuster)
+  work_location_type WorkLocationType @default(Head_Office)
+  department         Department?
+  work_location      String?
+  joining_date       DateTime?
+  employee_id        String?
+  status             StaffStatus      @default(Active)
+  invited            Boolean          @default(false)
+  notes              String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+}
+
+model Claim {
+  id                         String                 @id @default(cuid())
+  claim_reference            String                 @unique
+  policy_number              String?
+  claimant_name              String
+  injured_name               String?
+  insurance_type             InsuranceType
+  cover_type                 String?
+  plate_number               String?
+  claim_amount               Float
+  incident_date              DateTime
+  incident_description       String?
+  originating_office         String?
+  originating_office_type    OriginatingOfficeType?
+  received_reference_number  String?
+  date_received               DateTime?
+  workflow_type               WorkflowType           @default(Claim_Division)
+  gio_case_reason              GioCaseReason?
+  status                     ClaimStatus            @default(Draft)
+  current_approver_role      CurrentApproverRole    @default(None)
+  current_approver_id        String?
+  submitted_by_id            String?
+  submitted_by_name          String?
+  submission_date            DateTime?
+  approval_date               DateTime?
+  rejection_date              DateTime?
+  remarks                     String?
+  documents                   String[]
+  priority                    Priority               @default(Medium)
+  approval_level              Int                    @default(0)
+  max_approval_level          Int?
+  return_count                 Int                    @default(0)
+  workflow_stage               String?
+  workflow_stage_order         Int                    @default(0)
+  current_owner_id             String?
+  current_owner_name           String?
+  current_department           CurrentDepartment?
+  assigned_performer_id        String?
+  assigned_performer_name      String?
+  assignment_date              DateTime?
+  due_date                     DateTime?
+  closure_date                 DateTime?
+  insis_registered              Boolean                @default(false)
+  registration_type             RegistrationType?
+  registration_data             Json?
+  is_subrogation                 Boolean                @default(false)
+  is_recovery                    Boolean                @default(false)
+  is_reinsurance                 Boolean                @default(false)
+  registration_complete          Boolean                @default(false)
+  registration_completed_by_id   String?
+  registration_completed_by_name String?
+  registration_completed_at      DateTime?
+
+  createdAt                      DateTime               @default(now())
+  updatedAt                      DateTime               @updatedAt
+  activities                     ClaimActivity[]
+  actions                        ClaimAction[]
+  garages                        ClaimGarage[]
+  notifications                  Notification[]
+}
+
+model ApprovalThreshold {
+  id                     String                 @id @default(cuid())
+  insurance_type         ThresholdInsuranceType
+  min_amount             Float
+  max_amount             Float
+  required_approver_role RequiredApproverRole
+  approval_chain         String[]
+  is_active              Boolean                @default(true)
+  createdAt              DateTime               @default(now())
+  updatedAt              DateTime               @updatedAt
+}
+
+model ClaimAction {
+  id             String          @id @default(cuid())
+  claim_id       String
+  action_type    ClaimActionType
+  action_by_id   String
+  action_by_name String
+  action_by_role String?
+  comments       String?
+  from_level     Int?
+  to_level       Int?
+  documents      String[]
+  createdAt      DateTime        @default(now())
+  claim          Claim           @relation(fields: [claim_id], references: [id], onDelete: Cascade)
+}
+
+model ClaimActivity {
+  id                    String         @id @default(cuid())
+  claim_id              String
+  claim_reference       String?
+  stage_name            String
+  stage_order           Int
+  status                ActivityStatus @default(Pending)
+  responsible_user_id   String?
+  responsible_user_name String?
+  responsible_role      String?
+  department            String?
+  started_at            DateTime?
+  completed_at          DateTime?
+  comments              String?
+  documents             String[]
+  is_overdue             Boolean        @default(false)
+  due_date               DateTime?
+  registration_data      Json?
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+  claim                   Claim          @relation(fields: [claim_id], references: [id], onDelete: Cascade)
+}
+
+model ClaimGarage {
+  id                 String       @id @default(cuid())
+  claim_id           String
+  claim_reference    String?
+  garage_name        String
+  garage_location    String?
+  work_order_number  String?
+  work_order_date    DateTime?
+  estimated_amount   Float?
+  final_amount       Float?
+  repair_description String?
+  status             GarageStatus @default(Proforma_Requested)
+  start_date         DateTime?
+  completion_date    DateTime?
+  assigned_by_id     String?
+  assigned_by_name   String?
+  is_selected        Boolean      @default(false)
+  notes              String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  claim              Claim        @relation(fields: [claim_id], references: [id], onDelete: Cascade)
+}
+
+model Notification {
+  id              String           @id @default(cuid())
+  user_id         String
+  claim_id        String?
+  claim_reference String?
+  title           String
+  message         String
+  type            NotificationType @default(general)
+  is_read         Boolean          @default(false)
+  createdAt       DateTime         @default(now())
+  user            User?            @relation(fields: [user_id], references: [id])
+  claim           Claim?           @relation(fields: [claim_id], references: [id])
+}
+
+model WorkflowStage {
+  id                         String               @id @default(cuid())
+  stage_name                 String
+  description                String?
+  stage_order                Int
+  responsible_role           Role
+  workflow_type              WorkflowStageType    @default(Claim_Division)
+  applicable_insurance_types String[]
+  department                 WorkflowDepartment?
+  is_active                  Boolean              @default(true)
+  is_configurable            Boolean              @default(true)
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+}
