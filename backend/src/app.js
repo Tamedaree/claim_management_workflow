@@ -5,6 +5,8 @@ import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import path from "path";
 import errorHandler from "./middleware/errorHandler.js";
+import { auditContext } from "./middleware/auditContext.js";
+import accessLog from "./middleware/accessLog.js";
 
 // Routes
 import authRoutes from "./routes/auth.js";
@@ -17,12 +19,13 @@ import claimGarageRoutes from "./routes/claimGarages.js";
 import notificationRoutes from "./routes/notifications.js";
 import workflowStageRoutes from "./routes/workflowStage.js";
 import approvalThresholdRoutes from "./routes/approvalThreshold.js";
+import auditRoutes from "./routes/audit.js";
 
 const app = express();
 
 app.use(
   helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // allow frontend to load images
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
 app.use(
@@ -34,6 +37,8 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
+app.use(auditContext);
+app.use(accessLog);
 
 // Serve uploaded profile photos
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
@@ -55,6 +60,7 @@ app.use("/api/claim-garages", claimGarageRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/workflow-stages", workflowStageRoutes);
 app.use("/api/approval-thresholds", approvalThresholdRoutes);
+app.use("/api/audit", auditRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "Claim Workflow API is running" });

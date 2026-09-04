@@ -473,3 +473,48 @@ model WorkflowStage {
   createdAt                  DateTime             @default(now())
   updatedAt                  DateTime             @updatedAt
 }
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+}
+
+model DataAuditLog {
+  id          String      @id @default(cuid())
+  entityType  String      // "Claim", "StaffMember", "ApprovalThreshold", "WorkflowStage", "User"
+  entityId    String
+  action      AuditAction
+  changes     Json?       // { field: { old, new } }
+  actorId     String?
+  actorName   String?
+  actorRole   Role?       // reuse your existing Role enum — captures role AT time of action
+  requestId   String?     // correlates to AccessLog.requestId
+  createdAt   DateTime    @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+model AccessLog {
+  id           String    @id @default(cuid())
+  requestId    String    @unique
+  actorId      String?
+  actorRole    Role?
+  method       String
+  path         String
+  statusCode   Int?
+  ip           String?
+  userAgent    String?
+  action       String?   // "LOGIN_SUCCESS" | "LOGIN_FAILED" | "VIEW_CLAIM" | "EXPORT" | "API_CALL"
+  claimId      String?   // set when the request targets a specific claim — huge for "who viewed claim X"
+  durationMs   Int?
+  createdAt    DateTime  @default(now())
+
+  @@index([actorId])
+  @@index([claimId])
+  @@index([path])
+  @@index([createdAt])
+  @@index([ip])
+}
