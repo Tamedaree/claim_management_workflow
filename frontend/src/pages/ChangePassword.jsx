@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Loader2, ShieldCheck, CheckCircle2, Circle } from "lucide-react";
 import PasswordInput from "@/components/ui/password-input";
 import AuthLayout from "@/components/AuthLayout";
+import { getApiErrorMessage } from "@/lib/apiError";
 import loginLogo from "@/assets/login_logo.png";
 
 function LoginLogoIcon({ className }) {
@@ -90,7 +91,7 @@ export default function ChangePassword() {
       localStorage.removeItem("user");
       navigate("/login");
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to change password");
+      setError(getApiErrorMessage(err, "Failed to change password"));
     } finally {
       setSaving(false);
     }

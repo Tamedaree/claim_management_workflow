@@ -88,6 +88,7 @@ export const login = async (req, res, next) => {
     console.log("USER ACTIVE");
 
     const token = generateToken(user.id);
+    req.user = user;
     console.log("TOKEN GENERATED");
 
     res.json({

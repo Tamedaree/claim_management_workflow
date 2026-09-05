@@ -36,10 +36,12 @@ api.interceptors.response.use(
 
   (error) => {
     const originalRequest = error.config;
+    const isAuthFormRequest = originalRequest?.url?.startsWith("/auth/");
 
     if (
       error.response?.status === 401 &&
       originalRequest &&
+      !isAuthFormRequest &&
       !originalRequest._retry
     ) {
       originalRequest._retry = true;

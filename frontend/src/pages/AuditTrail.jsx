@@ -211,7 +211,15 @@ function AccessLogsTab() {
   const { loading, error, run } = useAsync();
 
   const load = useCallback(() => {
-    run(() => fetchAccessLogs(filters).then(setLogs));
+    run(() =>
+      fetchAccessLogs(filters).then((accessLogs) =>
+        setLogs(
+          [...accessLogs].sort(
+            (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
+          ),
+        ),
+      ),
+    );
   }, [filters, run]);
 
   useEffect(() => {
@@ -245,6 +253,7 @@ function AccessLogsTab() {
           <option value="LOGOUT">Logout</option>
           <option value="VIEW_CLAIM">View claim</option>
           <option value="EXPORT">Export</option>
+          <option value="API_CALL">API call</option>
         </select>
         <DateInput
           value={filters.from}
@@ -295,7 +304,7 @@ function AccessLogsTab() {
                       {formatDate(log.createdAt)}
                     </td>
                     <td className="py-3 pr-4 font-medium text-gray-800">
-                      {log.actorId || "—"}
+                      {log.actorName || log.actorId || "Anonymous"}
                       {log.actorRole && (
                         <span className="text-gray-400">
                           {" "}
@@ -313,7 +322,7 @@ function AccessLogsTab() {
                       {log.path}
                     </td>
                     <td className="py-3 pr-4">
-                      {log.action ? <ActionBadge action={log.action} /> : "—"}
+                      <ActionBadge action={log.action || "API_CALL"} />
                     </td>
                     <td className="py-3 pr-4">
                       <span
@@ -373,11 +382,14 @@ function AccessLogDetailDialog({ log, onClose }) {
         {log && (
           <dl className="grid grid-cols-1 gap-3 px-6 py-5 text-sm sm:grid-cols-2">
             <DetailItem label="When" value={formatDate(log.createdAt)} />
-            <DetailItem label="Actor" value={log.actorId} />
+            <DetailItem
+              label="Actor"
+              value={log.actorName || log.actorId || "Anonymous"}
+            />
             <DetailItem label="Role" value={log.actorRole} />
             <DetailItem
               label="Action"
-              value={log.action}
+              value={log.action || "API_CALL"}
               valueClassName="inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700"
             />
             <DetailItem label="Method" value={log.method} />
@@ -431,14 +443,14 @@ function DetailItem({ label, value, wide, valueClassName }) {
 // ---------------------------------------------------------------------
 
 function ClaimTimelineTab() {
-  const [claimId, setClaimId] = useState("");
+  const [claimReference, setClaimReference] = useState("");
   const [timeline, setTimeline] = useState(null);
   const { loading, error, run } = useAsync();
 
   const load = () => {
-    if (!claimId.trim()) return;
+    if (!claimReference.trim()) return;
     run(() =>
-      fetchClaimTimeline(claimId.trim()).then((data) =>
+      fetchClaimTimeline(claimReference.trim()).then((data) =>
         setTimeline(data.timeline),
       ),
     );
@@ -448,9 +460,9 @@ function ClaimTimelineTab() {
     <div>
       <FilterBar>
         <TextInput
-          placeholder="Claim ID"
-          value={claimId}
-          onChange={setClaimId}
+          placeholder="Claim reference"
+          value={claimReference}
+          onChange={setClaimReference}
         />
         <ApplyButton label="Load timeline" onClick={load} />
       </FilterBar>
@@ -473,7 +485,9 @@ function ClaimTimelineTab() {
                     ? "bg-blue-500"
                     : event.kind === "change"
                       ? "bg-amber-500"
-                      : "bg-gray-400"
+                      : event.kind === "activity"
+                        ? "bg-emerald-500"
+                        : "bg-gray-400"
                 }`}
               />
               <time className="text-xs text-gray-400">
@@ -489,6 +503,14 @@ function ClaimTimelineTab() {
                 <div className="mt-1">
                   <ChangesTable changes={event.raw.changes} compact />
                 </div>
+              )}
+              {event.kind === "access" && (
+                <p className="mt-1 text-xs text-gray-500">
+                  {event.raw?.ip || "Unknown IP"}
+                  {event.raw?.durationMs != null
+                    ? ` · ${event.raw.durationMs} ms`
+                    : ""}
+                </p>
               )}
             </li>
           ))}
@@ -583,6 +605,7 @@ function ActionBadge({ action }) {
     LOGOUT: "bg-gray-100 text-gray-700",
     VIEW_CLAIM: "bg-purple-100 text-purple-700",
     EXPORT: "bg-amber-100 text-amber-700",
+    API_CALL: "bg-gray-100 text-gray-700",
   };
   return (
     <span

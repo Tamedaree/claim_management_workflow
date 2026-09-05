@@ -4,8 +4,11 @@ import {
   getDataAuditLogs,
   getAccessLogs,
 } from "../controllers/auditController.js";
+import { protect } from "../middleware/auth.js";
 
 const router = express.Router();
+
+router.use(protect);
 
 router.get("/claims/:id/timeline", getClaimAuditTimeline);
 router.get("/data-changes", getDataAuditLogs);

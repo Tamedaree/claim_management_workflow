@@ -8,6 +8,7 @@ import { Mail, Lock, Loader2, ShieldCheck, ArrowUp } from "lucide-react";
 import PasswordInput from "@/components/ui/password-input";
 import AuthLayout from "@/components/AuthLayout";
 import { useAuth } from "@/lib/AuthContext";
+import { getApiErrorMessage } from "@/lib/apiError";
 import loginLogo from "@/assets/login_logo.png";
 
 function LoginLogoIcon({ className }) {
@@ -38,11 +39,7 @@ export default function Login() {
       await login(email, password, remember);
       window.location.href = "/";
     } catch (err) {
-      const message =
-        err.response?.data?.message ||
-        err.message ||
-        "Invalid email or password";
-      setError(message);
+      setError(getApiErrorMessage(err, "Invalid email or password"));
     } finally {
       setLoading(false);
     }

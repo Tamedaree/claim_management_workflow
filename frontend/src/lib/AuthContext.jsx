@@ -102,6 +102,15 @@ export function AuthProvider({ children }) {
     }
   };
 
+  // A protected page can be restored from the browser back-forward cache
+  // without remounting the app. Recheck the session before showing it.
+  useEffect(() => {
+    const handlePageShow = () => checkUserAuth();
+
+    window.addEventListener("pageshow", handlePageShow);
+    return () => window.removeEventListener("pageshow", handlePageShow);
+  }, []);
+
   const checkAppState = async () => {
     setIsLoadingPublicSettings(false);
     await checkUserAuth();
@@ -135,12 +144,12 @@ export function AuthProvider({ children }) {
     clearSession();
 
     if (shouldRedirect) {
-      window.location.href = "/login";
+      window.location.replace("/login");
     }
   };
 
   const navigateToLogin = () => {
-    window.location.href = "/login";
+    window.location.replace("/login");
   };
 
   return (

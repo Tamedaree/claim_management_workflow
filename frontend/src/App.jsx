@@ -44,7 +44,7 @@ import ClaimSearch from "@/pages/ClaimSearch";
 import CompleteClaimRegistration from "@/components/claims/CompleteClaimRegistration";
 
 const AuthenticatedApp = () => {
-  const { isLoadingAuth, authError, navigateToLogin } = useAuth();
+  const { isLoadingAuth, authError } = useAuth();
 
   if (isLoadingAuth) {
     return (
@@ -64,8 +64,7 @@ const AuthenticatedApp = () => {
       return <UserNotRegisteredError />;
     }
     if (authError.type === "auth_required") {
-      navigateToLogin();
-      return null;
+      return <Navigate to="/login" replace />;
     }
   }
 

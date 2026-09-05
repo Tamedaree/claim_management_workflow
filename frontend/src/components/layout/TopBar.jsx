@@ -12,6 +12,7 @@ import {
 import { toast } from "sonner";
 import api from "@/api/api";
 import { ROLE_LABELS } from "@/lib/roleConfig";
+import { useAuth } from "@/lib/AuthContext";
 
 const API_ORIGIN = "http://localhost:5000";
 
@@ -30,6 +31,7 @@ function getAvatarUrl(pathOrUrl) {
 }
 
 export default function TopBar({ user }) {
+  const { logout } = useAuth();
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
   const [localPreview, setLocalPreview] = useState(null);
@@ -151,10 +153,7 @@ export default function TopBar({ user }) {
   // ============================================================
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    localStorage.removeItem("user");
-
-    window.location.href = "/login";
+    logout();
   };
 
   // ============================================================

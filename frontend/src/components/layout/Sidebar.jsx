@@ -23,8 +23,10 @@ import {
   canViewGarages,
   canRegisterClaims,
 } from "@/lib/roleConfig";
+import { useAuth } from "@/lib/AuthContext";
 
 export default function Sidebar({ user, collapsed, onToggle }) {
+  const { logout } = useAuth();
   const location = useLocation();
   const role = user?.role || "claim_adjuster";
 
@@ -90,8 +92,7 @@ export default function Sidebar({ user, collapsed, onToggle }) {
   ];
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
-    window.location.href = "/login";
+    logout();
   };
 
   return (
