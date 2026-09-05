@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   Bell,
   User,
@@ -7,6 +7,7 @@ import {
   LogOut,
   Camera,
   ChevronDown,
+  ArrowLeft,
   Loader2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -32,6 +33,8 @@ function getAvatarUrl(pathOrUrl) {
 
 export default function TopBar({ user }) {
   const { logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [unreadCount, setUnreadCount] = useState(0);
   const [open, setOpen] = useState(false);
   const [localPreview, setLocalPreview] = useState(null);
@@ -41,6 +44,8 @@ export default function TopBar({ user }) {
 
   const menuRef = useRef(null);
   const fileRef = useRef(null);
+  const canGoBack =
+    location.pathname !== "/" && Number(window.history.state?.idx || 0) > 0;
 
   // Live clock — ticks every second so the header date/time stays current
   useEffect(() => {
@@ -248,7 +253,17 @@ export default function TopBar({ user }) {
         z-40
       "
     >
-      <div>
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => canGoBack && navigate(-1)}
+          disabled={!canGoBack}
+          aria-label="Go back"
+          title={canGoBack ? "Go back" : "No previous page"}
+          className="rounded-lg p-2 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          <ArrowLeft className="h-5 w-5" aria-hidden="true" />
+        </button>
         <h2 className="text-sm font-medium text-muted-foreground">
           Ethiopia Insurance Corporation
         </h2>
