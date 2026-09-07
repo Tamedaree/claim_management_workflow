@@ -20,6 +20,8 @@ import {
   Plus,
   Eye,
   Briefcase,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   STATUS_COLORS,
@@ -30,6 +32,8 @@ import {
 import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 import ExportButton from "@/components/ExportButton";
 import { format } from "date-fns";
+
+const PAGE_SIZE = 50;
 
 function personLabel(userOrNull, fallbackName) {
   if (userOrNull) {
@@ -56,6 +60,7 @@ export default function SecretaryDashboard() {
   const [claims, setClaims] = useState([]);
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -120,6 +125,13 @@ export default function SecretaryDashboard() {
       new Date(b.createdAt || b.submission_date || 0) -
       new Date(a.createdAt || a.submission_date || 0),
   );
+
+  const totalPages = Math.max(1, Math.ceil(registeredTable.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIdx = (safePage - 1) * PAGE_SIZE;
+  const pageRows = registeredTable.slice(startIdx, startIdx + PAGE_SIZE);
+  const showingFrom = registeredTable.length === 0 ? 0 : startIdx + 1;
+  const showingTo = Math.min(startIdx + PAGE_SIZE, registeredTable.length);
 
   const exportRegistered = (fmt) => {
     const headers = [
@@ -287,12 +299,13 @@ export default function SecretaryDashboard() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  registeredTable.map((c, index) => {
+                  pageRows.map((c, index) => {
+                    const displayIndex = startIdx + index + 1;
                     const isGio = c.workflow_type === "GIO_Approval";
                     return (
                       <TableRow key={c.id} className="hover:bg-muted/40">
                         <TableCell className="text-xs text-muted-foreground">
-                          {index + 1}
+                          {displayIndex}
                         </TableCell>
                         <TableCell className="font-mono text-xs font-semibold">
                           {c.claim_reference}
@@ -373,6 +386,41 @@ export default function SecretaryDashboard() {
               </TableBody>
             </Table>
           </div>
+          {registeredTable.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t">
+              <p className="text-xs text-muted-foreground">
+                Showing {showingFrom}–{showingTo} of {registeredTable.length}{" "}
+                records
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Prev
+                </Button>
+                <span className="text-xs text-muted-foreground tabular-nums px-1">
+                  Page {safePage} of {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

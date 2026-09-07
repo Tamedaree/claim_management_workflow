@@ -326,7 +326,7 @@ export default function NewGioCaseForm({ user }) {
             </div>
           )}
           <div className="space-y-1.5">
-            <Label>Claim amount (ETB) *</Label>
+            <Label>Reserved Claim amount (ETB) *</Label>
             <Input
               type="number"
               min="0"

@@ -30,7 +30,11 @@ import {
   ArrowDown,
   Workflow,
 } from "lucide-react";
-import { ROLE_LABELS, DEPARTMENT_OPTIONS } from "@/lib/roleConfig";
+import {
+  ROLE_LABELS,
+  DEPARTMENT_OPTIONS,
+  INSURANCE_TYPES,
+} from "@/lib/roleConfig";
 
 export default function WorkflowConfig() {
   const { toast } = useToast();
@@ -45,6 +49,7 @@ export default function WorkflowConfig() {
     responsible_role: "claim_adjuster",
     department: "Claim_Division",
     workflow_type: "Claim_Division",
+    applicable_insurance_types: [],
     is_active: true,
     is_configurable: true,
   });
@@ -108,6 +113,7 @@ export default function WorkflowConfig() {
       responsible_role: "claim_adjuster",
       department: "Claim_Division",
       workflow_type: "Claim_Division",
+      applicable_insurance_types: [],
       is_active: true,
       is_configurable: true,
     });
@@ -123,6 +129,7 @@ export default function WorkflowConfig() {
       responsible_role: stage.responsible_role || "claim_adjuster",
       department: stage.department || "Claim_Division",
       workflow_type: stage.workflow_type || "Claim_Division",
+      applicable_insurance_types: stage.applicable_insurance_types || [],
       is_active: stage.is_active ?? true,
       is_configurable: stage.is_configurable ?? true,
     });
@@ -317,6 +324,14 @@ export default function WorkflowConfig() {
                           ? stage.department.replace(/_/g, " ")
                           : "—"}
                       </span>
+                      {stage.applicable_insurance_types?.length > 0 && (
+                        <>
+                          <span>·</span>
+                          <span className="text-blue-600 font-medium">
+                            {stage.applicable_insurance_types.join(", ")} only
+                          </span>
+                        </>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -427,6 +442,61 @@ export default function WorkflowConfig() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs">Applies to Insurance Types</Label>
+                <button
+                  type="button"
+                  className="text-[10px] text-primary hover:underline"
+                  onClick={() =>
+                    setForm((f) => ({
+                      ...f,
+                      applicable_insurance_types:
+                        f.applicable_insurance_types.length === 0
+                          ? [] // already "all"
+                          : [],
+                    }))
+                  }
+                >
+                  {form.applicable_insurance_types.length === 0
+                    ? "(applies to all types)"
+                    : "Clear → apply to all"}
+                </button>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5 p-2 border rounded-md max-h-40 overflow-y-auto">
+                {INSURANCE_TYPES.map((t) => {
+                  const checked = form.applicable_insurance_types.includes(t);
+                  return (
+                    <label
+                      key={t}
+                      className="flex items-center gap-1.5 text-xs cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() =>
+                          setForm((f) => ({
+                            ...f,
+                            applicable_insurance_types: checked
+                              ? f.applicable_insurance_types.filter(
+                                  (x) => x !== t,
+                                )
+                              : [...f.applicable_insurance_types, t],
+                          }))
+                        }
+                      />
+                      {t}
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Leave all unchecked for a stage that applies to every insurance
+                type (registration, assignment, approval, etc.). Check specific
+                types for stages unique to that class of business (e.g. garage
+                tracking for Motor, medical review for Health).
+              </p>
             </div>
           </div>
           <DialogFooter>

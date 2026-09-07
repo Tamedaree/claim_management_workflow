@@ -20,29 +20,83 @@ import approvalThresholdRoutes from "./routes/approvalThreshold.js";
 
 const app = express();
 
+// Behind nginx / IIS / load balancer in production
+if (process.env.TRUST_PROXY === "1" || process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
 app.use(
   helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }, // allow frontend to load images
+    crossOriginResourcePolicy: { policy: "cross-origin" },
   }),
 );
+
+const allowedOrigins = (
+  process.env.FRONTEND_URL || "http://localhost:5173"
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173",
+    origin: (origin, cb) => {
+      // allow same-origin / server tools with no Origin header
+      if (!origin || allowedOrigins.includes(origin)) return cb(null, true);
+      return cb(new Error("Not allowed by CORS"));
+    },
     credentials: true,
   }),
 );
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan("dev"));
+app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
 
-// Serve uploaded profile photos
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 200,
+// ── Rate limits ──────────────────────────────────────────────
+const isDev = process.env.NODE_ENV !== "production";
+
+// Login / register / password — protect against brute force
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 min
+  max: isDev ? 100 : 30, // 30 login attempts / 15 min / IP in prod
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many auth attempts. Try again in 15 minutes.",
+  },
 });
-app.use("/api", limiter);
+
+// General API — high enough for real UI traffic
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: isDev ? 5000 : 2000, // ~2k req / 15 min / IP in prod
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    message: "Too many requests. Please slow down and try again.",
+  },
+});
+
+// Health — no limit
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", message: "Claim Workflow API is running" });
+});
+
+app.get("/", (req, res) => {
+  res.json({
+    status: "ok",
+    message: "Claim Workflow API is running",
+  });
+});
+
+// Apply limiters BEFORE routes
+app.use("/api/auth", authLimiter);
+app.use("/api", apiLimiter);
 
 // API Routes
 app.use("/api/auth", authRoutes);
@@ -55,17 +109,6 @@ app.use("/api/claim-garages", claimGarageRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/workflow-stages", workflowStageRoutes);
 app.use("/api/approval-thresholds", approvalThresholdRoutes);
-
-app.get("/api/health", (req, res) => {
-  res.json({ status: "ok", message: "Claim Workflow API is running" });
-});
-
-app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    message: "Claim Workflow API is running",
-  });
-});
 
 app.use(errorHandler);
 

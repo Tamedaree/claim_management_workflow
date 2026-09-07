@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
@@ -22,11 +23,24 @@ import {
   canViewMyClaims,
   canViewGarages,
   canRegisterClaims,
+  ROLE_LABELS,
 } from "@/lib/roleConfig";
+import { cn } from "@/lib/utils";
 
-export default function Sidebar({ user, collapsed, onToggle }) {
+export default function Sidebar({
+  user,
+  collapsed,
+  onToggle,
+  mobileOpen,
+  onMobileClose,
+}) {
   const location = useLocation();
   const role = user?.role || "claim_adjuster";
+
+  useEffect(() => {
+    onMobileClose?.();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
 
   const navItems = [
     { label: "Dashboard", icon: LayoutDashboard, path: "/", show: true },
@@ -41,7 +55,7 @@ export default function Sidebar({ user, collapsed, onToggle }) {
       label: "My Claims",
       icon: FileText,
       path: "/claims",
-      show: canViewMyClaims(role), // includes surveyor + register roles
+      show: canViewMyClaims(role),
     },
     {
       label: "Approvals",
@@ -53,7 +67,7 @@ export default function Sidebar({ user, collapsed, onToggle }) {
       label: "All Claims",
       icon: FileText,
       path: "/claims/all",
-      show: canViewAllClaims(role), // includes surveyor + approvers + admin
+      show: canViewAllClaims(role),
     },
     {
       label: "Garage Tracking",
@@ -91,33 +105,45 @@ export default function Sidebar({ user, collapsed, onToggle }) {
 
   const handleLogout = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem("user");
     window.location.href = "/login";
   };
 
+  const displayName =
+    user?.full_name ||
+    [user?.first_name, user?.last_name].filter(Boolean).join(" ") ||
+    user?.email ||
+    "User";
+
   return (
     <aside
-      className={`fixed top-0 left-0 h-screen bg-[hsl(222,47%,11%)] text-[hsl(220,14%,92%)] flex flex-col transition-all duration-300 z-50 ${
-        collapsed ? "w-[68px]" : "w-[260px]"
-      }`}
+      className={cn(
+        "fixed top-0 left-0 h-screen z-50 flex flex-col transition-all duration-300",
+        "bg-sidebar text-sidebar-foreground border-r border-sidebar-border",
+        "w-[260px]",
+        collapsed && "lg:w-[68px]",
+        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+      )}
     >
-      {/* Logo */}
-      <div className="flex items-center gap-3 px-4 h-16 border-b border-white/10 shrink-0">
+      <div
+        className={cn(
+          "flex items-center gap-3 px-4 h-16 border-b border-sidebar-border shrink-0",
+          collapsed && "lg:justify-center lg:px-2",
+        )}
+      >
         <div className="w-9 h-9 rounded-lg bg-amber-500 flex items-center justify-center font-bold text-sm text-gray-900 shrink-0">
           EIC
         </div>
-        {!collapsed && (
-          <div className="overflow-hidden">
-            <p className="text-sm font-semibold leading-tight truncate">
-              EIC Claims
-            </p>
-            <p className="text-[11px] text-white/50 truncate">
-              Workflow System
-            </p>
-          </div>
-        )}
+        <div className={cn("overflow-hidden", collapsed && "lg:hidden")}>
+          <p className="text-sm font-semibold leading-tight truncate">
+            EIC Claims
+          </p>
+          <p className="text-[11px] text-sidebar-foreground/50 truncate">
+            Workflow System
+          </p>
+        </div>
       </div>
 
-      {/* Nav */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {navItems
           .filter((item) => item.show)
@@ -125,38 +151,65 @@ export default function Sidebar({ user, collapsed, onToggle }) {
             const isActive =
               location.pathname === item.path ||
               (item.path !== "/" && location.pathname.startsWith(item.path));
+            const Icon = item.icon;
             return (
               <Link
                 key={item.path}
                 to={item.path}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all ${
-                  isActive
-                    ? "bg-amber-500/15 text-amber-400 font-medium"
-                    : "text-white/60 hover:bg-white/5 hover:text-white/90"
-                }`}
                 title={collapsed ? item.label : undefined}
+                className={cn(
+                  "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all",
+                  collapsed && "lg:justify-center lg:px-2",
+                  isActive
+                    ? "bg-sidebar-primary/15 text-sidebar-primary font-medium"
+                    : "text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                )}
               >
-                <item.icon className="w-[18px] h-[18px] shrink-0" />
-                {!collapsed && <span className="truncate">{item.label}</span>}
+                <Icon className="w-[18px] h-[18px] shrink-0" />
+                <span className={cn("truncate", collapsed && "lg:hidden")}>
+                  {item.label}
+                </span>
               </Link>
             );
           })}
       </nav>
 
-      {/* Collapse + logout */}
-      <div className="border-t border-white/10 p-3 shrink-0">
+      <div className="border-t border-sidebar-border p-3 shrink-0">
+        <div
+          className={cn(
+            "flex items-center gap-3 mb-3 px-1",
+            collapsed && "lg:hidden",
+          )}
+        >
+          <div className="w-8 h-8 rounded-full bg-sidebar-primary text-sidebar-primary-foreground flex items-center justify-center text-xs font-semibold shrink-0">
+            {displayName.charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0 overflow-hidden">
+            <p className="text-xs font-medium truncate">{displayName}</p>
+            <p className="text-[10px] text-sidebar-foreground/40 truncate">
+              {ROLE_LABELS?.[role] || role}
+            </p>
+          </div>
+        </div>
+
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={handleLogout}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-white/50 hover:bg-white/5 hover:text-white/80 transition-colors flex-1"
+            className={cn(
+              "flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-sidebar-foreground/50 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors flex-1",
+              collapsed && "lg:justify-center lg:px-2",
+            )}
             title="Logout"
           >
             <LogOut className="w-4 h-4 shrink-0" />
-            {!collapsed && <span>Sign Out</span>}
+            <span className={cn(collapsed && "lg:hidden")}>Sign Out</span>
           </button>
           <button
+            type="button"
             onClick={onToggle}
-            className="p-2 rounded-lg text-white/40 hover:bg-white/5 hover:text-white/70 transition-colors"
+            className="hidden lg:flex p-2 rounded-lg text-sidebar-foreground/40 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+            title={collapsed ? "Expand" : "Collapse"}
           >
             {collapsed ? (
               <ChevronRight className="w-4 h-4" />
