@@ -39,6 +39,8 @@ import {
   findTierEntry,
   isLastTierStage,
   nextTierEntry,
+  getStageLabel,
+  getStageDescription,
 } from "@/lib/roleConfig";
 import moment from "moment";
 
@@ -139,10 +141,10 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
         title: "Stage completed",
         description:
           showTierChoice && completionChoice === "finalize"
-            ? `"${currentStage.stage_name}" finalized — no further sign-off needed.`
+            ? `"${getStageLabel(currentStage.stage_name)}" finalized — no further sign-off needed.`
             : needsAdjusterAssign
-              ? `"${currentStage.stage_name}" completed. Assigned to ${payload.assign_user_name}.`
-              : `"${currentStage.stage_name}" forwarded to the next stage.`,
+              ? `"${getStageLabel(currentStage.stage_name)}" completed. Assigned to ${payload.assign_user_name}.`
+              : `"${getStageLabel(currentStage.stage_name)}" forwarded to the next stage.`,
         duration: 3000,
       });
       setActionOpen(false);
@@ -177,8 +179,12 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-2 flex flex-row items-center justify-between">
           <CardTitle className="text-sm">GIO Case Workflow</CardTitle>
-          <Badge variant="outline" className="text-xs">
-            {currentStage?.stage_name || "Not Started"}
+          <Badge
+            variant="outline"
+            className="text-xs"
+            title={getStageDescription(currentStage?.stage_name)}
+          >
+            {getStageLabel(currentStage?.stage_name) || "Not Started"}
           </Badge>
         </CardHeader>
         <CardContent>
@@ -248,8 +254,9 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
                           className={`text-sm font-medium ${
                             isSkipped ? "line-through decoration-1" : ""
                           }`}
+                          title={getStageDescription(activity.stage_name)}
                         >
-                          {activity.stage_name}
+                          {getStageLabel(activity.stage_name)}
                         </span>
                         <Badge
                           className={`text-[10px] ${
@@ -341,7 +348,9 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Complete — {currentStage?.stage_name}</DialogTitle>
+            <DialogTitle>
+              Complete — {getStageLabel(currentStage?.stage_name)}
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">

@@ -104,6 +104,7 @@ export const login = async (req, res, next) => {
         work_location: user.work_location,
         profile_image_url: user.profile_image_url,
         is_active: user.is_active,
+        must_change_password: user.must_change_password === true,
       },
     });
   } catch (error) {
@@ -221,7 +222,7 @@ export const changePassword = async (req, res, next) => {
 
     await prisma.user.update({
       where: { id: userId },
-      data: { password: hashed },
+      data: { password: hashed, must_change_password: false },
     });
 
     res.json({
@@ -270,5 +271,40 @@ export const uploadProfileImage = async (req, res, next) => {
     });
   } catch (error) {
     next(error);
+  }
+};
+
+export const resetStaffPassword = async (req, res, next) => {
+  try {
+    const { password } = req.body; // temp password from admin UI
+    if (!password || password.length < 8) {
+      throw new ApiError(400, "Password must be at least 8 characters");
+    }
+
+    const hashed = await bcrypt.hash(password, 12);
+
+    // Update StaffMember if you keep a staff row, AND the login User by email
+    const staff = await prisma.staffMember.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!staff) throw new ApiError(404, "Staff not found");
+
+    await prisma.user.update({
+      where: { email: staff.email },
+      data: {
+        password: hashed,
+        must_change_password: true,
+      },
+    });
+
+    // Never persist plain password in DB
+    res.json({
+      success: true,
+      message: "Temporary password set. User must change it on next login.",
+      // Return plain password ONLY in this admin response so UI can show/copy once
+      temporaryPassword: password,
+    });
+  } catch (e) {
+    next(e);
   }
 };

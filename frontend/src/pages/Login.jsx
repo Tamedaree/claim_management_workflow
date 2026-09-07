@@ -36,8 +36,14 @@ export default function Login() {
     setLoading(true);
 
     try {
-      await login(email, password, remember);
-      window.location.href = "/";
+      const data = await login(email, password, remember);
+      const u = data?.user ?? data?.data?.user;
+
+      if (u?.must_change_password) {
+        window.location.href = "/change-password?forced=1";
+      } else {
+        window.location.href = "/";
+      }
     } catch (err) {
       setError(getApiErrorMessage(err, "Invalid email or password"));
     } finally {

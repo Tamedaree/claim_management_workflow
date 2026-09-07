@@ -3,9 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="./src/assets/login_logo.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
     <link rel="manifest" href="/manifest.json" />
     <title>Claim Management Automation System</title>
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("eic-theme") || "system";
+          var dark =
+            t === "dark" ||
+            (t === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

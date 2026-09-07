@@ -488,6 +488,35 @@ export const WORKFLOW_SCOPE_BY_ROLE = {
   chief_of_gio: "GIO_Approval",
 };
 
+export const CLAIM_DIVISION_ROLES = [
+  "secretary",
+  "surveyor",
+  "claim_adjuster",
+  "principal_claim_officer",
+  "claim_manager",
+  "director", // shared
+];
+
+/** Roles that appear on GIO workflow / audit filters */
+export const GIO_ROLES = [
+  "secretary",
+  "gio_claim_adjuster",
+  "gio_claim_manager",
+  "director", // shared
+  "chief_of_gio",
+  "ceo",
+];
+
+/**
+ * Roles to show in a filter dropdown for a workflow stream.
+ * @param {"Claim_Division"|"GIO_Approval"|"all"} stream
+ */
+export function getRolesForWorkflowStream(stream) {
+  if (stream === "GIO_Approval") return GIO_ROLES;
+  if (stream === "Claim_Division") return CLAIM_DIVISION_ROLES;
+  return Object.keys(ROLE_LABELS);
+}
+
 export function getWorkflowScopeForRole(role) {
   return WORKFLOW_SCOPE_BY_ROLE[role] || "all";
 }
@@ -496,6 +525,7 @@ export function getWorkflowScopeForRole(role) {
 export const WORKFLOW_STAGES = [
   {
     stage_name: "Claim Receipt & Registration",
+    stage_label: "Registration",
     stage_order: 1,
     responsible_role: "secretary",
     department: "Claim Division",
@@ -504,6 +534,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Claim Assignment",
+    stage_label: "Assignment",
     stage_order: 2,
     responsible_role: "principal_claim_officer",
     department: "Claim Division",
@@ -512,6 +543,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Claim Adjuster Allocation",
+    stage_label: "Allocation",
     stage_order: 3,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -520,6 +552,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Policy & Underwriting Verification",
+    stage_label: "Policy check",
     stage_order: 4,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -528,6 +561,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Third-Party Recovery Recording",
+    stage_label: "Recovery",
     stage_order: 5,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -536,6 +570,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Damage Assessment Request",
+    stage_label: "Survey request",
     stage_order: 6,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -544,6 +579,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Survey & Damage Assessment",
+    stage_label: "Survey",
     stage_order: 7,
     responsible_role: "surveyor",
     department: "Claim Division",
@@ -552,6 +588,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Assessment Review by Principal",
+    stage_label: "Assessment review",
     stage_order: 8,
     responsible_role: "principal_claim_officer",
     department: "Claim Division",
@@ -560,6 +597,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Proforma & Garage Bidding",
+    stage_label: "Garage bidding",
     stage_order: 9,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -568,6 +606,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Tender Analysis & Garage Selection",
+    stage_label: "Garage selection",
     stage_order: 10,
     responsible_role: "principal_claim_officer",
     department: "Claim Division",
@@ -576,6 +615,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Work Order Preparation & Issuance",
+    stage_label: "Work order",
     stage_order: 11,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -584,6 +624,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Repair Monitoring",
+    stage_label: "Repair",
     stage_order: 12,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -592,6 +633,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Final Inspection (Post-Repair)",
+    stage_label: "Final inspection",
     stage_order: 13,
     responsible_role: "surveyor",
     department: "Claim Division",
@@ -600,6 +642,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Total Loss Assessment",
+    stage_label: "Total loss",
     stage_order: 14,
     responsible_role: "principal_claim_officer",
     department: "Claim Division",
@@ -608,6 +651,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Salvage & Satisfaction Note Collection",
+    stage_label: "Salvage",
     stage_order: 15,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -616,6 +660,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Payment Preparation & Settlement Recommendation",
+    stage_label: "Payment prep",
     stage_order: 16,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
@@ -624,6 +669,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Managerial Review",
+    stage_label: "Manager review",
     stage_order: 17,
     responsible_role: "claim_manager",
     department: "Claim Division",
@@ -632,6 +678,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Director Approval",
+    stage_label: "Director",
     stage_order: 18,
     responsible_role: "director",
     department: "Claim Division",
@@ -640,6 +687,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Payment Processing",
+    stage_label: "Payment",
     stage_order: 19,
     responsible_role: "principal_claim_officer",
     department: "Claim Division",
@@ -648,6 +696,7 @@ export const WORKFLOW_STAGES = [
   },
   {
     stage_name: "Claim Closed",
+    stage_label: "Closed",
     stage_order: 20,
     responsible_role: "secretary",
     department: "Claim Division",
@@ -658,6 +707,7 @@ export const WORKFLOW_STAGES = [
 export const GIO_WORKFLOW_STAGES = [
   {
     stage_name: "GIO Case Registration",
+    stage_label: "Registration",
     stage_order: 1,
     responsible_role: "secretary",
     department: "GIO",
@@ -665,6 +715,7 @@ export const GIO_WORKFLOW_STAGES = [
   },
   {
     stage_name: "Chief of GIO Decision",
+    stage_label: "Chief of GIO",
     stage_order: 2,
     responsible_role: "chief_of_gio",
     department: "GIO",
@@ -672,6 +723,7 @@ export const GIO_WORKFLOW_STAGES = [
   },
   {
     stage_name: "GIO Claim Adjuster Review",
+    stage_label: "Adjuster",
     stage_order: 3,
     responsible_role: "gio_claim_adjuster",
     department: "GIO",
@@ -679,6 +731,7 @@ export const GIO_WORKFLOW_STAGES = [
   },
   {
     stage_name: "GIO Claim Manager Review",
+    stage_label: "Manager",
     stage_order: 4,
     responsible_role: "gio_claim_manager",
     department: "GIO",
@@ -686,6 +739,7 @@ export const GIO_WORKFLOW_STAGES = [
   },
   {
     stage_name: "Director Decision",
+    stage_label: "Director",
     stage_order: 5,
     responsible_role: "director",
     department: "GIO",
@@ -693,6 +747,7 @@ export const GIO_WORKFLOW_STAGES = [
   },
   {
     stage_name: "Chief of GIO Approval",
+    stage_label: "Chief approval",
     stage_order: 6,
     responsible_role: "chief_of_gio",
     department: "GIO",
@@ -700,6 +755,7 @@ export const GIO_WORKFLOW_STAGES = [
   },
   {
     stage_name: "CEO Decision",
+    stage_label: "CEO",
     stage_order: 7,
     responsible_role: "ceo",
     department: "GIO",
@@ -707,12 +763,32 @@ export const GIO_WORKFLOW_STAGES = [
   },
   {
     stage_name: "GIO Case Closure",
+    stage_label: "Closed",
     stage_order: 8,
     responsible_role: "secretary",
     department: "GIO",
     description: "Secretary closes the case",
   },
 ];
+
+const ALL_STAGES = [...WORKFLOW_STAGES, ...GIO_WORKFLOW_STAGES];
+
+export function getStageLabel(stageOrName) {
+  if (!stageOrName) return "—";
+  if (typeof stageOrName === "object") {
+    return stageOrName.stage_label || stageOrName.stage_name || "—";
+  }
+  const found = ALL_STAGES.find((s) => s.stage_name === stageOrName);
+  return found?.stage_label || stageOrName;
+}
+
+/** Long text — tooltip / detail only */
+export function getStageDescription(stageOrName) {
+  if (!stageOrName) return "";
+  const name =
+    typeof stageOrName === "object" ? stageOrName.stage_name : stageOrName;
+  return ALL_STAGES.find((s) => s.stage_name === name)?.description || "";
+}
 
 export const ACTIVITY_STATUS_COLORS = {
   Pending: "bg-gray-100 text-gray-700",
