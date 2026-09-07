@@ -1,5 +1,6 @@
 import { Outlet, Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/lib/AuthContext";
+import { getToken } from "@/lib/tokenStorage";
 import UserNotRegisteredError from "@/components/UserNotRegisteredError";
 
 const DefaultFallback = () => (
@@ -24,6 +25,7 @@ export default function ProtectedRoute({
   const { isAuthenticated, isLoadingAuth, authChecked, authError, user } =
     useAuth();
   const location = useLocation();
+  const hasSessionToken = Boolean(getToken());
 
   if (isLoadingAuth || !authChecked) {
     return fallback;
@@ -36,7 +38,7 @@ export default function ProtectedRoute({
     return unauthenticatedElement;
   }
 
-  if (!isAuthenticated) {
+  if (!isAuthenticated || !hasSessionToken) {
     return unauthenticatedElement;
   }
 

@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Mail, Lock, Loader2 } from "lucide-react";
 import AuthLayout from "@/components/AuthLayout";
 import loginLogo from "@/assets/login_logo.png";
+import { getApiErrorMessage } from "@/lib/apiError";
 
 function LoginLogoIcon({ className }) {
   return (
@@ -60,9 +61,7 @@ export default function Register() {
 
       window.location.href = "/";
     } catch (err) {
-      setError(
-        err.response?.data?.message || err.message || "Registration failed",
-      );
+      setError(getApiErrorMessage(err, "Registration failed"));
     } finally {
       setLoading(false);
     }

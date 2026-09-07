@@ -24,6 +24,7 @@ import {
   DEPARTMENTS,
   FORWARDING_OFFICE_TYPES,
   FORWARDING_OFFICES,
+  toEnumKey,
 } from "@/lib/roleConfig";
 
 /**
@@ -37,7 +38,7 @@ import {
  * @property {number | string} [claim_amount]
  * @property {string} [incident_date]
  * @property {string} [incident_description]
- * @property {string} [forwarding_office_type]
+ * @property {string} [originating_office_type]
  * @property {string} [originating_office]
  * @property {string} [current_department]
  * @property {string} [workflow_type]
@@ -55,7 +56,7 @@ import {
  * @property {string | number} claim_amount
  * @property {string} incident_date
  * @property {string} incident_description
- * @property {string} forwarding_office_type
+ * @property {string} originating_office_type
  * @property {string} originating_office
  * @property {string} current_department
  * @property {string} workflow_type
@@ -75,11 +76,17 @@ function buildFormFromClaim(claim) {
     insurance_type: claim.insurance_type || "",
     plate_number: claim.plate_number || "",
     claim_amount: claim.claim_amount || "",
-    incident_date: claim.incident_date ? String(claim.incident_date).slice(0, 10) : "",
+    incident_date: claim.incident_date
+      ? String(claim.incident_date).slice(0, 10)
+      : "",
     incident_description: claim.incident_description || "",
-    forwarding_office_type: claim.forwarding_office_type || "",
+    originating_office_type: claim.originating_office_type
+      ? claim.originating_office_type.replace(/_/g, " ")
+      : "",
     originating_office: claim.originating_office || "",
-    current_department: claim.current_department || "Claim_Division",
+    current_department: claim.current_department
+      ? claim.current_department.replace(/_/g, " ")
+      : "Claim Division",
     workflow_type: claim.workflow_type || "Claim_Division",
     priority: claim.priority || "Medium",
     remarks: claim.remarks || "",
@@ -109,7 +116,7 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
     setForm((f) => {
       const next = { ...f, [field]: value };
       // Reset office name when type changes
-      if (field === "forwarding_office_type") {
+      if (field === "originating_office_type") {
         next.originating_office = "";
       }
       return next;
@@ -117,8 +124,9 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
   };
 
   const officeList =
-    form.forwarding_office_type && FORWARDING_OFFICES?.[form.forwarding_office_type]
-      ? FORWARDING_OFFICES[form.forwarding_office_type]
+    form.originating_office_type &&
+    FORWARDING_OFFICES?.[form.originating_office_type]
+      ? FORWARDING_OFFICES[form.originating_office_type]
       : [];
 
   const handleSave = async () => {
@@ -144,13 +152,18 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
         policy_number: form.policy_number || null,
         claimant_name: form.claimant_name,
         insurance_type: form.insurance_type,
-        plate_number: form.insurance_type === "Motor" ? form.plate_number || null : null,
+        plate_number:
+          form.insurance_type === "Motor" ? form.plate_number || null : null,
         claim_amount: parseFloat(String(form.claim_amount)),
         incident_date: form.incident_date,
         incident_description: form.incident_description || null,
-        forwarding_office_type: form.forwarding_office_type || null,
+        originating_office_type: form.originating_office_type
+          ? toEnumKey(form.originating_office_type)
+          : null,
         originating_office: form.originating_office || null,
-        current_department: form.current_department || null,
+        current_department: form.current_department
+          ? toEnumKey(form.current_department)
+          : null,
         workflow_type: form.workflow_type || null,
         priority: form.priority || "Medium",
         remarks: form.remarks || null,
@@ -179,7 +192,9 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
       <div className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium">INSIS Claim Reference *</Label>
+            <Label className="text-xs font-medium">
+              INSIS Claim Reference *
+            </Label>
             <Input
               value={form.claim_reference}
               onChange={(e) => handleChange("claim_reference", e.target.value)}
@@ -204,7 +219,10 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
 
           <div className="space-y-1.5">
             <Label className="text-xs font-medium">Insurance Type *</Label>
-            <Select value={form.insurance_type} onValueChange={(v) => handleChange("insurance_type", v)}>
+            <Select
+              value={form.insurance_type}
+              onValueChange={(v) => handleChange("insurance_type", v)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select type" />
               </SelectTrigger>
@@ -249,7 +267,10 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
 
           <div className="space-y-1.5">
             <Label className="text-xs font-medium">Priority</Label>
-            <Select value={form.priority} onValueChange={(v) => handleChange("priority", v)}>
+            <Select
+              value={form.priority}
+              onValueChange={(v) => handleChange("priority", v)}
+            >
               <SelectTrigger>
                 <SelectValue />
               </SelectTrigger>
@@ -263,12 +284,14 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
             </Select>
           </div>
 
-          {/* Forwarding Office Type */}
+          {/* Originating Office Type */}
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Forwarding Office Type</Label>
+            <Label className="text-xs font-medium">
+              Originating Office Type
+            </Label>
             <Select
-              value={form.forwarding_office_type}
-              onValueChange={(v) => handleChange("forwarding_office_type", v)}
+              value={form.originating_office_type}
+              onValueChange={(v) => handleChange("originating_office_type", v)}
             >
               <SelectTrigger>
                 <SelectValue placeholder="Select type" />
@@ -276,16 +299,16 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
               <SelectContent>
                 {FORWARDING_OFFICE_TYPES.map((t) => (
                   <SelectItem key={t} value={t}>
-                    {t}
+                    {t.replace(/_/g, " ")}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          {/* Forwarding Office Name */}
+          {/* Originating Office Name */}
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Forwarding Office</Label>
+            <Label className="text-xs font-medium">Originating Office</Label>
             {officeList.length > 0 ? (
               <Select
                 value={form.originating_office}
@@ -305,8 +328,10 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
             ) : (
               <Input
                 value={form.originating_office}
-                onChange={(e) => handleChange("originating_office", e.target.value)}
-                placeholder="Enter forwarding office name"
+                onChange={(e) =>
+                  handleChange("originating_office", e.target.value)
+                }
+                placeholder="Enter originating office name"
               />
             )}
           </div>
@@ -334,7 +359,10 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
           {/* Workflow Type */}
           <div className="space-y-1.5">
             <Label className="text-xs font-medium">Workflow Type</Label>
-            <Select value={form.workflow_type} onValueChange={(v) => handleChange("workflow_type", v)}>
+            <Select
+              value={form.workflow_type}
+              onValueChange={(v) => handleChange("workflow_type", v)}
+            >
               <SelectTrigger>
                 <SelectValue placeholder="Select workflow" />
               </SelectTrigger>
@@ -350,14 +378,20 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
           <Label className="text-xs font-medium">Incident Description</Label>
           <Textarea
             value={form.incident_description}
-            onChange={(e) => handleChange("incident_description", e.target.value)}
+            onChange={(e) =>
+              handleChange("incident_description", e.target.value)
+            }
             rows={3}
           />
         </div>
 
         <div className="space-y-1.5">
           <Label className="text-xs font-medium">Remarks</Label>
-          <Textarea value={form.remarks} onChange={(e) => handleChange("remarks", e.target.value)} rows={2} />
+          <Textarea
+            value={form.remarks}
+            onChange={(e) => handleChange("remarks", e.target.value)}
+            rows={2}
+          />
         </div>
       </div>
 
@@ -384,12 +418,22 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
 /**
  * @param {EditClaimDialogProps} props
  */
-export default function EditClaimDialog({ claim, open, onOpenChange, onSaved }) {
+export default function EditClaimDialog({
+  claim,
+  open,
+  onOpenChange,
+  onSaved,
+}) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
         {open && claim && (
-          <EditClaimForm key={claim.id} claim={claim} onOpenChange={onOpenChange} onSaved={onSaved} />
+          <EditClaimForm
+            key={claim.id}
+            claim={claim}
+            onOpenChange={onOpenChange}
+            onSaved={onSaved}
+          />
         )}
       </DialogContent>
     </Dialog>

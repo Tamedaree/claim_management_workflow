@@ -5,6 +5,8 @@ import morgan from "morgan";
 import rateLimit from "express-rate-limit";
 import path from "path";
 import errorHandler from "./middleware/errorHandler.js";
+import { auditContext } from "./middleware/auditContext.js";
+import accessLog from "./middleware/accessLog.js";
 
 // Routes
 import authRoutes from "./routes/auth.js";
@@ -17,8 +19,11 @@ import claimGarageRoutes from "./routes/claimGarages.js";
 import notificationRoutes from "./routes/notifications.js";
 import workflowStageRoutes from "./routes/workflowStage.js";
 import approvalThresholdRoutes from "./routes/approvalThreshold.js";
+import auditRoutes from "./routes/audit.js";
 
 const app = express();
+
+app.set("trust proxy", 1);
 
 // Behind nginx / IIS / load balancer in production
 if (process.env.TRUST_PROXY === "1" || process.env.NODE_ENV === "production") {
@@ -52,6 +57,8 @@ app.use(
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev"));
+app.use(auditContext);
+app.use(accessLog);
 
 app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
@@ -109,6 +116,7 @@ app.use("/api/claim-garages", claimGarageRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/workflow-stages", workflowStageRoutes);
 app.use("/api/approval-thresholds", approvalThresholdRoutes);
+app.use("/api/audit", auditRoutes);
 
 app.use(errorHandler);
 

@@ -6,6 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Lock, Loader2, AlertTriangle } from "lucide-react";
 import PasswordInput from "@/components/ui/password-input";
 import AuthLayout from "@/components/AuthLayout";
+import { getApiErrorMessage } from "@/lib/apiError";
 
 export default function ResetPassword() {
   const [searchParams] = useSearchParams();
@@ -38,11 +39,7 @@ export default function ResetPassword() {
       });
       window.location.href = "/login";
     } catch (err) {
-      setError(
-        err.response?.data?.message ||
-          err.message ||
-          "Failed to reset password",
-      );
+      setError(getApiErrorMessage(err, "Failed to reset password"));
     } finally {
       setLoading(false);
     }

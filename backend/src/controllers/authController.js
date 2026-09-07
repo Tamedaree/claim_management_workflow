@@ -74,16 +74,22 @@ export const login = async (req, res, next) => {
     }
 
     const user = await prisma.user.findUnique({ where: { email } });
+    console.log("USER:", user);
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new ApiError(401, "Invalid email or password");
     }
 
+    console.log("PASSWORD VERIFIED");
+
     if (!user.is_active) {
       throw new ApiError(403, "Your account is deactivated");
     }
+    console.log("USER ACTIVE");
 
     const token = generateToken(user.id);
+    req.user = user;
+    console.log("TOKEN GENERATED");
 
     res.json({
       success: true,

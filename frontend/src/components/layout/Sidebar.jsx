@@ -25,6 +25,7 @@ import {
   canRegisterClaims,
   ROLE_LABELS,
 } from "@/lib/roleConfig";
+import { useAuth } from "@/lib/AuthContext";
 import { cn } from "@/lib/utils";
 
 export default function Sidebar({
@@ -34,6 +35,7 @@ export default function Sidebar({
   mobileOpen,
   onMobileClose,
 }) {
+  const { logout } = useAuth();
   const location = useLocation();
   const role = user?.role || "claim_adjuster";
 
@@ -104,9 +106,8 @@ export default function Sidebar({
   ];
 
   const handleLogout = () => {
-    localStorage.removeItem("token");
+    logout();
     localStorage.removeItem("user");
-    window.location.href = "/login";
   };
 
   const displayName =

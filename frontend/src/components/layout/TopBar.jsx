@@ -119,6 +119,7 @@ export default function TopBar({ user, onMenuClick }) {
   const handleLogout = () => {
     localStorage.removeItem("token");
     localStorage.removeItem("user");
+
     window.location.href = "/login";
   };
 
