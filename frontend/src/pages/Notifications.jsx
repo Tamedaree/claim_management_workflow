@@ -54,7 +54,8 @@ export default function Notifications() {
     setLoading(true);
     try {
       const res = await api.get("/notifications");
-      setNotifications(res.data.data || []);
+      const list = res.data?.data ?? res.data ?? [];
+      setNotifications(Array.isArray(list) ? list : []);
     } catch {
       // silent
     } finally {
@@ -72,7 +73,10 @@ export default function Notifications() {
       setLoading(true);
       try {
         const res = await api.get("/notifications");
-        if (!cancelled) setNotifications(res.data.data || []);
+        const list = res.data?.data ?? res.data ?? [];
+        if (!cancelled) {
+          setNotifications(Array.isArray(list) ? list : []);
+        }
       } catch {
         // silent
       } finally {

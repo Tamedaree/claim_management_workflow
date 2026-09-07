@@ -52,6 +52,8 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { ROLE_LABELS } from "@/lib/roleConfig";
 import StaffFormDialog, {
@@ -62,6 +64,8 @@ import ExportButton from "@/components/ExportButton";
 import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 
 const ROLES = Object.entries(ROLE_LABELS);
+
+const PAGE_SIZE = 50;
 
 const SORT_ACCESSORS = {
   name: (s) =>
@@ -101,6 +105,7 @@ export default function AdminUsers() {
   const [credentialsDialog, setCredentialsDialog] = useState(null);
   const [sortField, setSortField] = useState(null);
   const [sortDirection, setSortDirection] = useState("asc");
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -247,6 +252,7 @@ export default function AdminUsers() {
       setSortField(field);
       setSortDirection("asc");
     }
+    setPage(1);
   };
 
   const filtered = staff.filter((s) => {
@@ -269,6 +275,13 @@ export default function AdminUsers() {
         return 0;
       })
     : filtered;
+
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIdx = (safePage - 1) * PAGE_SIZE;
+  const pageRows = sorted.slice(startIdx, startIdx + PAGE_SIZE);
+  const showingFrom = sorted.length === 0 ? 0 : startIdx + 1;
+  const showingTo = Math.min(startIdx + PAGE_SIZE, sorted.length);
 
   const exportStaff = (format) => {
     const headers = [
@@ -347,10 +360,19 @@ export default function AdminUsers() {
             className="pl-9"
             placeholder="Search by name, email, ID..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
           />
         </div>
-        <Select value={roleFilter} onValueChange={setRoleFilter}>
+        <Select
+          value={roleFilter}
+          onValueChange={(v) => {
+            setRoleFilter(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-[200px]">
             <SelectValue />
           </SelectTrigger>
@@ -444,113 +466,150 @@ export default function AdminUsers() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {sorted.map((s, idx) => (
-                  <TableRow key={s.id}>
-                    <TableCell className="pl-4 text-xs text-muted-foreground">
-                      {idx + 1}
-                    </TableCell>
-                    <TableCell className="pl-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-semibold shrink-0">
-                          {(fullName(s) || s.email || "U")
-                            .charAt(0)
-                            .toUpperCase()}
+                {pageRows.map((s, idx) => {
+                  const displayIndex = startIdx + idx + 1;
+                  return (
+                    <TableRow key={s.id}>
+                      <TableCell className="pl-4 text-xs text-muted-foreground">
+                        {displayIndex}
+                      </TableCell>
+                      <TableCell className="pl-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-full bg-primary flex items-center justify-center text-primary-foreground text-xs font-semibold shrink-0">
+                            {(fullName(s) || s.email || "U")
+                              .charAt(0)
+                              .toUpperCase()}
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">
+                              {fullName(s) || "Unnamed"}
+                            </p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {s.email}
+                            </p>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium truncate">
-                            {fullName(s) || "Unnamed"}
-                          </p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {s.email}
-                          </p>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="secondary" className="text-[10px]">
+                          {ROLE_LABELS[s.role] || s.role}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                        <div>
+                          {s.department ? s.department.replace(/_/g, " ") : "—"}
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="secondary" className="text-[10px]">
-                        {ROLE_LABELS[s.role] || s.role}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                      <div>
-                        {s.department ? s.department.replace(/_/g, " ") : "—"}
-                      </div>
-                      <div className="text-[10px]">
-                        {s.work_location || "Head Office"}
-                      </div>
-                    </TableCell>
-                    <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
-                      {s.phone || "—"}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        variant="secondary"
-                        className={`text-[10px] ${
-                          s.status === "Active"
-                            ? "bg-emerald-100 text-emerald-700"
-                            : "bg-gray-200 text-gray-600"
-                        }`}
-                      >
-                        {s.status || "Active"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right pr-4">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                          >
-                            <MoreHorizontal className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => setViewing(s)}>
-                            <Eye className="w-4 h-4" /> View Details
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => {
-                              setEditing(s);
-                              setFormOpen(true);
-                            }}
-                          >
-                            <Pencil className="w-4 h-4" /> Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleResetPassword(s)}
-                          >
-                            <KeyRound className="w-4 h-4" /> Reset Password
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          {s.status === "Active" ? (
+                        <div className="text-[10px]">
+                          {s.work_location || "Head Office"}
+                        </div>
+                      </TableCell>
+                      <TableCell className="hidden lg:table-cell text-xs text-muted-foreground">
+                        {s.phone || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          variant="secondary"
+                          className={`text-[10px] ${
+                            s.status === "Active"
+                              ? "bg-emerald-100 text-emerald-700"
+                              : "bg-gray-200 text-gray-600"
+                          }`}
+                        >
+                          {s.status || "Active"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right pr-4">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                            >
+                              <MoreHorizontal className="w-4 h-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setViewing(s)}>
+                              <Eye className="w-4 h-4" /> View Details
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => {
+                                setEditing(s);
+                                setFormOpen(true);
+                              }}
+                            >
+                              <Pencil className="w-4 h-4" /> Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={() => handleResetPassword(s)}
+                            >
+                              <KeyRound className="w-4 h-4" /> Reset Password
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            {s.status === "Active" ? (
+                              <DropdownMenuItem
+                                className="text-red-600 focus:text-red-600"
+                                onClick={() => setDeactivateTarget(s)}
+                              >
+                                <UserX className="w-4 h-4" /> Deactivate
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem
+                                className="text-emerald-600 focus:text-emerald-600"
+                                onClick={() => toggleStatus(s)}
+                              >
+                                <UserCheck className="w-4 h-4" /> Activate
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem
                               className="text-red-600 focus:text-red-600"
-                              onClick={() => setDeactivateTarget(s)}
+                              onClick={() => setDeleteTarget(s)}
                             >
-                              <UserX className="w-4 h-4" /> Deactivate
+                              <Trash2 className="w-4 h-4" /> Delete
                             </DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem
-                              className="text-emerald-600 focus:text-emerald-600"
-                              onClick={() => toggleStatus(s)}
-                            >
-                              <UserCheck className="w-4 h-4" /> Activate
-                            </DropdownMenuItem>
-                          )}
-                          <DropdownMenuItem
-                            className="text-red-600 focus:text-red-600"
-                            onClick={() => setDeleteTarget(s)}
-                          >
-                            <Trash2 className="w-4 h-4" /> Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
+            {sorted.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t">
+                <p className="text-xs text-muted-foreground">
+                  Showing {showingFrom}–{showingTo} of {sorted.length} users
+                </p>
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1"
+                    disabled={safePage <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                    Prev
+                  </Button>
+                  <span className="text-xs text-muted-foreground tabular-nums px-1">
+                    Page {safePage} of {totalPages}
+                  </span>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1"
+                    disabled={safePage >= totalPages}
+                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                  >
+                    Next
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

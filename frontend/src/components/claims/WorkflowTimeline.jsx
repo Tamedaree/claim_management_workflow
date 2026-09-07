@@ -36,8 +36,14 @@ import {
   ArrowUpRight,
   Flag,
   Wrench,
+  RotateCcw,
 } from "lucide-react";
-import { ACTIVITY_STATUS_COLORS, ROLE_LABELS } from "@/lib/roleConfig";
+import {
+  ACTIVITY_STATUS_COLORS,
+  ROLE_LABELS,
+  getStageLabel,
+  getStageDescription,
+} from "@/lib/roleConfig";
 import {
   CLAIM_DIVISION_APPROVAL_TIER,
   findTierEntry,
@@ -101,9 +107,16 @@ async function attachStaffNames(users) {
   }
 }
 
-const isGarageBiddingStage = (name = "") => {
+const isGarageSelectionStage = (name = "") => {
   const n = (name || "").toLowerCase();
-  return n.includes("proforma") || n.includes("garage bidding");
+  if (n.includes("proforma")) return false;
+  if (n.includes("bidding") && !n.includes("selection")) return false;
+  return (
+    n.includes("garage selection") ||
+    n.includes("tender analysis") ||
+    n.includes("select garage") ||
+    (n.includes("tender") && n.includes("selection"))
+  );
 };
 
 const toPrismaStatus = (s) => {
@@ -116,6 +129,39 @@ const toDisplayStatus = (s) => {
   if (s === "In_Progress") return "In Progress";
   if (s === "On_Hold") return "On Hold";
   return s;
+};
+
+const filterStagesForClaim = (stagesData, claim) => {
+  const type = claim?.insurance_type;
+  let list = Array.isArray(stagesData) ? stagesData : [];
+
+  // Claim Division timeline only
+  list = list.filter((s) => {
+    const wt = s.workflow_type || "Claim_Division";
+    return wt === "Claim_Division" || wt === "Both";
+  });
+
+  if (!type) return list;
+
+  return list.filter((s) => {
+    const applicable = s.applicable_insurance_types;
+    if (!applicable || (Array.isArray(applicable) && applicable.length === 0)) {
+      return true; // empty = all types
+    }
+    const arr = Array.isArray(applicable)
+      ? applicable
+      : typeof applicable === "string"
+        ? (() => {
+            try {
+              return JSON.parse(applicable);
+            } catch {
+              return [];
+            }
+          })()
+        : [];
+    if (arr.length === 0) return true;
+    return arr.includes(type) || arr.includes("All");
+  });
 };
 
 const isAdjusterAssignStage = (name = "") => {
@@ -153,19 +199,26 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const [selectedAdjusterId, setSelectedAdjusterId] = useState("");
   const [selectedPrincipalId, setSelectedPrincipalId] = useState("");
   const [processing, setProcessing] = useState(false);
-  // "forward" | "finalize" — only meaningful at approval-tier stages
   const [completionChoice, setCompletionChoice] = useState("forward");
   const [actingUserName, setActingUserName] = useState(null);
+  const [nameByEmail, setNameByEmail] = useState({});
+  const [returnModalOpen, setReturnModalOpen] = useState(false);
+  const [returningStage, setReturningStage] = useState(null);
+  const [returnTargetOrder, setReturnTargetOrder] = useState("");
+  const [returnComments, setReturnComments] = useState("");
+  const [returnProcessing, setReturnProcessing] = useState(false);
 
-  const fetchWorkflowData = async (claimId) => {
+  const fetchWorkflowData = async (claimId, claimData) => {
     const [stagesRes, activitiesRes] = await Promise.all([
       api.get("/workflow-stages?is_active=true"),
       api.get(`/claim-activities/claim/${claimId}`),
     ]);
 
-    const stagesData = (stagesRes.data?.data || stagesRes.data || []).sort(
+    const rawStages = (stagesRes.data?.data || stagesRes.data || []).sort(
       (a, b) => a.stage_order - b.stage_order,
     );
+    const stagesData = filterStagesForClaim(rawStages, claimData);
+
     const activitiesData = (
       activitiesRes.data?.data ||
       activitiesRes.data ||
@@ -184,6 +237,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       try {
         const { stagesData, activitiesData } = await fetchWorkflowData(
           claim.id,
+          claim,
         );
         if (!cancelled) {
           setStages(stagesData);
@@ -199,13 +253,16 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     return () => {
       cancelled = true;
     };
-  }, [claim?.id]);
+  }, [claim, claim.id]);
 
   const loadData = async () => {
     if (!claim?.id) return;
     setLoading(true);
     try {
-      const { stagesData, activitiesData } = await fetchWorkflowData(claim.id);
+      const { stagesData, activitiesData } = await fetchWorkflowData(
+        claim.id,
+        claim,
+      );
       setStages(stagesData);
       setActivities(activitiesData);
     } catch {
@@ -256,6 +313,33 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       cancelled = true;
     };
   }, [user?.email, user?.first_name, user?.middle_name, user?.full_name]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get("/staff")
+      .then((res) => {
+        if (cancelled) return;
+        const map = {};
+        for (const s of res.data?.data || []) {
+          const email = String(s.email || "").toLowerCase();
+          const name = [s.first_name, s.middle_name].filter(Boolean).join(" ");
+          if (email && name) map[email] = name;
+        }
+        setNameByEmail(map);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const showPersonName = (value) => {
+    if (!value) return "";
+    const s = String(value);
+    if (!s.includes("@")) return s;
+    return nameByEmail[s.toLowerCase()] || s;
+  };
 
   const getActivityForStage = (stageName) =>
     activities.find((a) => a.stage_name === stageName);
@@ -376,6 +460,151 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     }
   };
 
+  const openReturnModal = (stage) => {
+    setReturningStage(stage);
+    setReturnTargetOrder("");
+    setReturnComments("");
+    setReturnModalOpen(true);
+  };
+
+  const earlierStagesFor = (stage) =>
+    stages
+      .filter((s) => s.stage_order < stage.stage_order)
+      .sort((a, b) => b.stage_order - a.stage_order); // most recent first
+
+  const handleReturnConfirm = async () => {
+    if (!returningStage) return;
+
+    if (!returnTargetOrder) {
+      toast({
+        title: "Select a stage",
+        description: "Choose which earlier stage to return this claim to.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    if (!returnComments.trim()) {
+      toast({
+        title: "Comments required",
+        description: "Explain why this claim is being returned.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setReturnProcessing(true);
+    try {
+      const targetOrder = Number(returnTargetOrder);
+      const targetStage = stages.find((s) => s.stage_order === targetOrder);
+      if (!targetStage) throw new Error("Target stage not found");
+
+      const now = new Date().toISOString();
+      const actorName = actingUserName || user.full_name || user.email;
+
+      const inRangeStages = stages.filter(
+        (s) =>
+          s.stage_order >= targetStage.stage_order &&
+          s.stage_order <= returningStage.stage_order,
+      );
+
+      for (const s of inRangeStages) {
+        const existingActivity = activities.find(
+          (a) => a.stage_name === s.stage_name,
+        );
+        const isTarget = s.stage_order === targetStage.stage_order;
+
+        const resetData = isTarget
+          ? {
+              status: "In_Progress",
+              started_at: now,
+              completed_at: null,
+              comments: `Returned for correction: ${returnComments}`,
+            }
+          : {
+              status: "Pending",
+              started_at: null,
+              completed_at: null,
+              comments: null,
+            };
+
+        if (existingActivity) {
+          await api.put(`/claim-activities/${existingActivity.id}`, resetData);
+        } else if (isTarget) {
+          await api.post("/claim-activities", {
+            claim_id: claim.id,
+            claim_reference: claim.claim_reference,
+            stage_name: s.stage_name,
+            stage_order: s.stage_order,
+            department: s.department,
+            ...resetData,
+          });
+        }
+      }
+
+      await api.put(`/claims/${claim.id}`, {
+        workflow_stage: targetStage.stage_name,
+        workflow_stage_order: targetStage.stage_order,
+        current_department: targetStage.department,
+        status: "Returned_for_Correction",
+      });
+
+      await api.post("/claim-actions", {
+        claim_id: claim.id,
+        action_type: "Returned",
+        action_by_id: user.id,
+        action_by_name: actorName,
+        action_by_role: ROLE_LABELS[user.role] || user.role,
+        comments: `Returned from "${returningStage.stage_name}" to "${targetStage.stage_name}": ${returnComments}`,
+      });
+
+      const targetRoleLabel =
+        ROLE_LABELS[targetStage.responsible_role] ||
+        targetStage.responsible_role;
+
+      try {
+        const recipients = await findApproversByRoleAndLocation(
+          targetStage.responsible_role,
+          claim,
+        );
+        await Promise.all(
+          recipients.slice(0, 5).map((u) =>
+            api.post("/notifications", {
+              user_id: u.id,
+              claim_id: claim.id,
+              claim_reference: claim.claim_reference,
+              title: `Claim returned: ${claim.claim_reference}`,
+              message: `${actorName} returned this claim to "${targetStage.stage_name}" for correction. Reason: ${returnComments}`,
+              type: "claim_returned",
+            }),
+          ),
+        );
+      } catch {
+        // notification failure shouldn't block the return itself
+      }
+
+      toast({
+        title: "Claim returned",
+        description: `Sent back to "${targetStage.stage_name}" (${targetRoleLabel}).`,
+      });
+
+      setReturnModalOpen(false);
+      setReturningStage(null);
+      setReturnTargetOrder("");
+      setReturnComments("");
+      await loadData();
+      if (onActivityUpdated) onActivityUpdated();
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: e.response?.data?.message || "Failed to return claim.",
+        variant: "destructive",
+      });
+    } finally {
+      setReturnProcessing(false);
+    }
+  };
+
   const isAssignmentStage =
     actionModal?.stage && isAdjusterAssignStage(actionModal.stage.stage_name);
 
@@ -418,19 +647,18 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       const prismaStatus = toPrismaStatus(uiStatus);
       const now = new Date().toISOString();
 
-      const actorName = actingUserName || user.full_name || user.email;
+      const actorName = actingUserName || user.full_name || null;
 
-      if (!actorName) {
+      if (!actorName || String(actorName).includes("@")) {
         toast({
           title: "Name not loaded",
           description:
-            "Staff profile name missing for your account. Cannot save as email.",
+            "Your staff first/middle name is missing. Fix Staff profile or wait for name to load.",
           variant: "destructive",
         });
         setProcessing(false);
         return;
       }
-
       let registrationData = { ...(existing?.registration_data || {}) };
 
       if (isAssignmentStage) {
@@ -497,7 +725,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         claim_id: claim.id,
         action_type:
           prismaStatus === "Completed"
-            ? "Approved"
+            ? "Forwarded"
             : prismaStatus === "In_Progress"
               ? "Comment"
               : "Comment",
@@ -628,20 +856,30 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             ROLE_LABELS[nextStage.responsible_role] ||
             nextStage.responsible_role;
 
-          const nextUsers = await findApproversByRoleAndLocation(
+          let recipients = await findApproversByRoleAndLocation(
             nextStage.responsible_role,
             claim,
           );
 
-          for (const u of nextUsers.slice(0, 5)) {
-            await api.post("/notifications", {
-              user_id: u.id,
-              claim_id: claim.id,
-              claim_reference: claim.claim_reference,
-              title: `New Task: ${nextStage.stage_name}`,
-              message: `${completedByRole} completed "${stage.stage_name}" on claim ${claim.claim_reference}. Action needed as ${nextRoleLabel} on "${nextStage.stage_name}".`,
-              type: "info_requested",
+          if (!recipients.length) {
+            console.warn("No recipients for", nextStage.responsible_role);
+            toast({
+              title: "Stage completed",
+              description: `No users found with role ${nextRoleLabel} to notify.`,
             });
+          } else {
+            await Promise.all(
+              recipients.slice(0, 5).map((u) =>
+                api.post("/notifications", {
+                  user_id: u.id,
+                  claim_id: claim.id,
+                  claim_reference: claim.claim_reference,
+                  title: `New Task: ${nextStage.stage_name}`,
+                  message: `${completedByRole} completed "${stage.stage_name}" on claim ${claim.claim_reference}. Action needed as ${nextRoleLabel} on "${nextStage.stage_name}".`,
+                  type: "approval_required",
+                }),
+              ),
+            );
           }
 
           await api.put(`/claims/${claim.id}`, {
@@ -699,8 +937,12 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-2 flex flex-row items-center justify-between">
           <CardTitle className="text-sm">Workflow Activity Timeline</CardTitle>
-          <Badge variant="outline" className="text-xs">
-            {claim.workflow_stage || "Not Started"}
+          <Badge
+            variant="outline"
+            className="text-xs"
+            title={getStageDescription(claim.workflow_stage)}
+          >
+            {getStageLabel(claim.workflow_stage) || "Not Started"}
           </Badge>
         </CardHeader>
         <CardContent>
@@ -779,8 +1021,12 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                             className={`text-sm font-medium ${
                               isSkipped ? "line-through decoration-1" : ""
                             }`}
+                            title={
+                              getStageDescription(stage.stage_name) ||
+                              stage.description
+                            }
                           >
-                            {stage.stage_name}
+                            {getStageLabel(stage.stage_name)}
                           </span>
                           <Badge
                             className={`text-[10px] ${
@@ -858,6 +1104,17 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                                     <Pause className="w-3 h-3 mr-1" /> Hold
                                   </Button>
                                 )}
+                                {earlierStagesFor(stage).length > 0 && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 px-2 text-xs text-orange-700 hover:text-orange-800"
+                                    onClick={() => openReturnModal(stage)}
+                                  >
+                                    <RotateCcw className="w-3 h-3 mr-1" />{" "}
+                                    Return
+                                  </Button>
+                                )}
                               </>
                             ) : (
                               <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
@@ -869,12 +1126,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                           </div>
                         )}
                       </div>
-
-                      {stage.description && (
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {stage.description}
-                        </p>
-                      )}
 
                       <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground flex-wrap">
                         <span className="flex items-center gap-1">
@@ -889,7 +1140,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                             : "—"}
                         </span>
                         {activity?.responsible_user_name && (
-                          <span>· {activity.responsible_user_name}</span>
+                          <span>
+                            · {showPersonName(activity.responsible_user_name)}
+                          </span>
                         )}
                         {activity?.started_at && (
                           <span>
@@ -951,7 +1204,8 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                           &quot;{activity.comments}&quot;
                         </p>
                       )}
-                      {isGarageBiddingStage(stage.stage_name) &&
+                      {claim.insurance_type === "Motor" &&
+                        isGarageSelectionStage(stage.stage_name) &&
                         (status === "In Progress" || status === "Pending") &&
                         myStage && (
                           <Link
@@ -990,7 +1244,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                 : actionModal?.newStatus === "On Hold"
                   ? "Hold"
                   : "Start"}{" "}
-              — {actionModal?.stage?.stage_name}
+              — {getStageLabel(actionModal?.stage?.stage_name)}
             </DialogTitle>
           </DialogHeader>
 
@@ -1129,11 +1383,12 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
               </div>
             )}
             {actionModal?.stage &&
-              isGarageBiddingStage(actionModal.stage.stage_name) && (
+              claim.insurance_type === "Motor" &&
+              isGarageSelectionStage(actionModal.stage.stage_name) && (
                 <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-sm space-y-2">
                   <p>
-                    Use Garage Tracking to add proformas / garages for this
-                    claim.
+                    Use Garage Tracking to review tenders and select the garage
+                    for this claim.
                   </p>
                   <Link
                     to="/garages"
@@ -1173,6 +1428,87 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
               {processing
                 ? "Processing..."
                 : `Confirm ${actionModal?.newStatus}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={returnModalOpen}
+        onOpenChange={() => {
+          setReturnModalOpen(false);
+          setReturningStage(null);
+          setReturnTargetOrder("");
+          setReturnComments("");
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              Return Claim — {getStageLabel(returningStage?.stage_name)}
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Claim <strong>{claim.claim_reference}</strong> will be sent back
+              for correction. Every stage between your choice and this one will
+              need to be redone.
+            </p>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">
+                Return to which stage? <span className="text-red-500">*</span>
+              </Label>
+              <Select
+                value={returnTargetOrder}
+                onValueChange={setReturnTargetOrder}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select an earlier stage..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {returningStage &&
+                    earlierStagesFor(returningStage).map((s) => (
+                      <SelectItem key={s.id} value={String(s.stage_order)}>
+                        {getStageLabel(s.stage_name)} ·{" "}
+                        {ROLE_LABELS[s.responsible_role] || s.responsible_role}
+                      </SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs">
+                Reason for return <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                value={returnComments}
+                onChange={(e) => setReturnComments(e.target.value)}
+                rows={3}
+                placeholder="What needs to be corrected..."
+              />
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setReturnModalOpen(false);
+                setReturningStage(null);
+                setReturnTargetOrder("");
+                setReturnComments("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleReturnConfirm}
+              disabled={returnProcessing}
+              className="bg-orange-600 hover:bg-orange-700"
+            >
+              {returnProcessing ? "Returning..." : "Confirm Return"}
             </Button>
           </DialogFooter>
         </DialogContent>

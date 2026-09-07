@@ -29,6 +29,8 @@ import {
   AlertTriangle,
   Activity,
   User,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import {
   STATUS_COLORS,
@@ -38,6 +40,8 @@ import {
   isClaimOverdue,
 } from "@/lib/roleConfig";
 import EditClaimDialog from "@/components/claims/EditClaimDialog";
+
+const PAGE_SIZE = 50;
 
 function ownerDisplayName(ownerId, ownerName, usersById) {
   const u = ownerId ? usersById[ownerId] : null;
@@ -60,6 +64,7 @@ export default function PrincipalClaimOfficerDashboard() {
   const [editing, setEditing] = useState(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [page, setPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,6 +119,13 @@ export default function PrincipalClaimOfficerDashboard() {
 
     return matchSearch && matchStatus && matchOverdue;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIdx = (safePage - 1) * PAGE_SIZE;
+  const pageRows = filtered.slice(startIdx, startIdx + PAGE_SIZE);
+  const showingFrom = filtered.length === 0 ? 0 : startIdx + 1;
+  const showingTo = Math.min(startIdx + PAGE_SIZE, filtered.length);
 
   const pendingClaims = claims.filter(
     (c) =>
@@ -256,11 +268,20 @@ export default function PrincipalClaimOfficerDashboard() {
             className="pl-9"
             placeholder="Search ref, claimant, plate..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
           />
         </div>
 
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select
+          value={statusFilter}
+          onValueChange={(v) => {
+            setStatusFilter(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-56">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
@@ -277,7 +298,10 @@ export default function PrincipalClaimOfficerDashboard() {
 
         <button
           type="button"
-          onClick={() => setOverdueOnly(!overdueOnly)}
+          onClick={() => {
+            setOverdueOnly(!overdueOnly);
+            setPage(1);
+          }}
           className={`flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-colors ${
             overdueOnly
               ? "bg-red-100 text-red-700"
@@ -315,7 +339,8 @@ export default function PrincipalClaimOfficerDashboard() {
                   </TableCell>
                 </TableRow>
               ) : (
-                filtered.slice(0, 50).map((claim, idx) => {
+                pageRows.map((claim, idx) => {
+                  const displayIndex = startIdx + idx + 1;
                   const overdue = isClaimOverdue(claim);
                   const aging = getClaimAging(claim);
                   const ownerLabel = ownerDisplayName(
@@ -330,7 +355,7 @@ export default function PrincipalClaimOfficerDashboard() {
                       className={overdue ? "bg-red-50/50" : ""}
                     >
                       <TableCell className="text-xs text-muted-foreground">
-                        {idx + 1}
+                        {displayIndex}
                       </TableCell>
                       <TableCell>
                         <Link
@@ -419,10 +444,39 @@ export default function PrincipalClaimOfficerDashboard() {
             </TableBody>
           </Table>
         </div>
-        {filtered.length > 50 && (
-          <p className="text-xs text-center text-muted-foreground py-3">
-            Showing 50 of {filtered.length} claims
-          </p>
+        {filtered.length > 0 && (
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t">
+            <p className="text-xs text-muted-foreground">
+              Showing {showingFrom}–{showingTo} of {filtered.length} claims
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Prev
+              </Button>
+              <span className="text-xs text-muted-foreground tabular-nums px-1">
+                Page {safePage} of {totalPages}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            </div>
+          </div>
         )}
       </Card>
       <EditClaimDialog

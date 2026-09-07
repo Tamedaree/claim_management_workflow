@@ -177,7 +177,7 @@ export default function AdminDashboard() {
             </div>
             <p className="text-2xl font-bold">{formatCurrency(totalAmount)}</p>
             <p className="text-xs text-muted-foreground mt-1">
-              Total Claim Value
+              Total Reserved Value
             </p>
           </CardContent>
         </Card>

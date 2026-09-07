@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, useSearchParams, Link } from "react-router-dom";
 import api from "@/api/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -8,6 +8,8 @@ import { Loader2, ShieldCheck, CheckCircle2, Circle } from "lucide-react";
 import PasswordInput from "@/components/ui/password-input";
 import AuthLayout from "@/components/AuthLayout";
 import loginLogo from "@/assets/login_logo.png";
+import { useAuth } from "@/lib/AuthContext";
+import { clearSession } from "@/lib/tokenStorage"; // if you use tokenStorage
 
 function LoginLogoIcon({ className }) {
   return (
@@ -36,6 +38,12 @@ function Rule({ ok, text }) {
 
 export default function ChangePassword() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const forced =
+    searchParams.get("forced") === "1" || searchParams.get("forced") === "true";
+
+  const { logout, checkUserAuth } = useAuth();
+
   const [form, setForm] = useState({
     currentPassword: "",
     newPassword: "",
@@ -62,9 +70,13 @@ export default function ChangePassword() {
       form.currentPassword !== form.newPassword,
   };
 
+  // Optionally require upper/lower/number for forced policy
   const canSubmit =
     form.currentPassword &&
     rules.length &&
+    rules.upper &&
+    rules.lower &&
+    rules.number &&
     rules.match &&
     rules.different &&
     !saving;
@@ -85,10 +97,23 @@ export default function ChangePassword() {
         newPassword: form.newPassword,
       });
 
-      toast.success("Password changed successfully. Please sign in again.");
-      localStorage.removeItem("token");
-      localStorage.removeItem("user");
-      navigate("/login");
+      // Backend must set must_change_password = false
+
+      if (forced) {
+        // Force re-login with new password (safest)
+        toast.success(
+          "Password updated. Please sign in with your new password.",
+        );
+        clearSession?.();
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+        logout?.(false);
+        navigate("/login", { replace: true });
+      } else {
+        toast.success("Password changed successfully");
+        await checkUserAuth?.();
+        navigate("/profile", { replace: true });
+      }
     } catch (err) {
       setError(err.response?.data?.message || "Failed to change password");
     } finally {
@@ -99,17 +124,38 @@ export default function ChangePassword() {
   return (
     <AuthLayout
       icon={LoginLogoIcon}
-      title="Change password"
-      subtitle="Create a strong password for your account"
+      title={forced ? "Set a new password" : "Change password"}
+      subtitle={
+        forced
+          ? "You signed in with a temporary password. Create a new one to continue."
+          : "Create a strong password for your account"
+      }
       footer={
-        <Link
-          to="/profile"
-          className="text-amber-400 hover:underline font-medium"
-        >
-          Back to profile
-        </Link>
+        forced ? (
+          <button
+            type="button"
+            className="text-amber-400 hover:underline font-medium text-sm"
+            onClick={() => logout?.(true)}
+          >
+            Sign out
+          </button>
+        ) : (
+          <Link
+            to="/profile"
+            className="text-amber-400 hover:underline font-medium"
+          >
+            Back to profile
+          </Link>
+        )
       }
     >
+      {forced && (
+        <div className="mb-4 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-sm">
+          For security, you must change this temporary password before using the
+          system.
+        </div>
+      )}
+
       {error && (
         <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm flex items-start gap-2">
           <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" />
@@ -119,7 +165,9 @@ export default function ChangePassword() {
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div className="space-y-2">
-          <Label htmlFor="currentPassword">Current password</Label>
+          <Label htmlFor="currentPassword">
+            {forced ? "Temporary password" : "Current password"}
+          </Label>
           <PasswordInput
             id="currentPassword"
             value={form.currentPassword}

@@ -219,16 +219,22 @@ enum RequiredApproverRole {
 }
 
 enum ClaimActionType {
-  Submitted
+  Registered
+  Assigned
+  Forwarded
   Approved
   Rejected
-  Returned
+  Returned_for_Correction
   Escalated
+  Status_Changed
+  Comment_Added
+  Closed
+  // keep legacy so old rows still load
+  Submitted
+  Returned
   Additional_Info_Requested
   Resubmitted
   Comment
-  Assigned
-  Forwarded
 }
 
 enum ActivityStatus {
@@ -279,6 +285,7 @@ model User {
   password           String
   role               Role             @default(claim_adjuster)
   work_location_type WorkLocationType @default(Head_Office)
+  must_change_password Boolean        @default(false)
   department         Department?
   work_location      String?
   phone              String?
@@ -385,18 +392,26 @@ model ApprovalThreshold {
 }
 
 model ClaimAction {
-  id             String          @id @default(cuid())
-  claim_id       String
-  action_type    ClaimActionType
-  action_by_id   String
-  action_by_name String
-  action_by_role String?
-  comments       String?
-  from_level     Int?
-  to_level       Int?
-  documents      String[]
-  createdAt      DateTime        @default(now())
-  claim          Claim           @relation(fields: [claim_id], references: [id], onDelete: Cascade)
+  id                          String          @id @default(cuid())
+  claim_id                    String
+  claim_reference             String?
+  action_type                 ClaimActionType
+  from_stage                  String?
+  to_stage                    String?
+  from_status                 String?
+  to_status                   String?
+  action_by_id                String
+  action_by_name              String
+  action_by_role              String?
+  previous_responsible_person String?
+  new_responsible_person      String?
+  comments                    String?         // remarks
+  workflow_type               WorkflowType?
+  from_level                  Int?
+  to_level                    Int?
+  documents                   String[]
+  createdAt                   DateTime        @default(now())
+  claim                       Claim           @relation(fields: [claim_id], references: [id], onDelete: Cascade)
 }
 
 model ClaimActivity {

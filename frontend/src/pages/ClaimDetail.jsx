@@ -38,6 +38,8 @@ import {
   ROLE_LABELS,
   APPROVER_ROLE_MAP,
   isApprovalRole,
+  getStageLabel,
+  getStageDescription,
 } from "@/lib/roleConfig";
 import { findApproversByRoleAndLocation } from "@/lib/userMatching";
 import moment from "moment";
@@ -60,39 +62,106 @@ function formatNameFromString(name) {
   return name;
 }
 
+function buildStageHistory(activityList = []) {
+  const byStage = new Map();
+
+  for (const a of activityList) {
+    const key = a.stage_name || `order-${a.stage_order}`;
+    const prev = byStage.get(key);
+
+    // Prefer Completed > In_Progress > On_Hold > others; then newest date
+    const rank = (s) => {
+      const x = String(s || "");
+      if (x === "Completed") return 4;
+      if (x === "In_Progress" || x === "In Progress") return 3;
+      if (x === "On_Hold" || x === "On Hold") return 2;
+      if (x === "Skipped") return 1;
+      return 0;
+    };
+
+    const aTime = new Date(
+      a.completed_at || a.started_at || a.updatedAt || a.createdAt || 0,
+    ).getTime();
+    const pTime = prev
+      ? new Date(
+          prev.completed_at ||
+            prev.started_at ||
+            prev.updatedAt ||
+            prev.createdAt ||
+            0,
+        ).getTime()
+      : 0;
+
+    if (
+      !prev ||
+      rank(a.status) > rank(prev.status) ||
+      (rank(a.status) === rank(prev.status) && aTime >= pTime)
+    ) {
+      byStage.set(key, a);
+    }
+  }
+
+  return [...byStage.values()].sort(
+    (a, b) => (a.stage_order || 0) - (b.stage_order || 0),
+  );
+}
+
 export default function ClaimDetail() {
   const { id } = useParams();
   const { user } = useOutletContext();
   const navigate = useNavigate();
   const { toast } = useToast();
   const [claim, setClaim] = useState(null);
-  const [actions, setActions] = useState([]);
   const [thresholds, setThresholds] = useState([]);
   const [ownerUser, setOwnerUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionModal, setActionModal] = useState(null);
   const [comments, setComments] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [activities, setActivities] = useState([]);
+  const [nameByEmail, setNameByEmail] = useState({});
 
   const loadData = async () => {
+    if (!id) return;
     setLoading(true);
     try {
-      const [claimRes, actionsRes, thresholdsRes] = await Promise.all([
-        api.get(`/claims/${id}`),
-        api.get(`/claim-actions/claim/${id}`),
-        api.get("/approval-thresholds?is_active=true"),
-      ]);
+      const claimRes = await api.get(`/claims/${id}`);
+      const claimData = claimRes.data?.data ?? claimRes.data;
+      if (!claimData?.id) {
+        throw Object.assign(new Error("Claim not found"), { status: 404 });
+      }
+      setClaim(claimData);
 
-      setClaim(claimRes.data.data);
-      setActions(actionsRes.data.data || []);
-      setThresholds(thresholdsRes.data.data || []);
-    } catch {
+      try {
+        const actRes = await api.get(`/claim-activities/claim/${id}`);
+        setActivities(actRes.data?.data || []);
+      } catch {
+        setActivities([]);
+      }
+
+      try {
+        const thresholdsRes = await api.get(
+          "/approval-thresholds?is_active=true",
+        );
+        setThresholds(thresholdsRes.data?.data || []);
+      } catch {
+        setThresholds([]);
+      }
+    } catch (err) {
+      const status = err.response?.status || err.status;
+      const is404 = status === 404;
+
       toast({
         title: "Error",
-        description: "Claim not found",
+        description: is404
+          ? "Claim not found"
+          : err.response?.data?.message || "Could not refresh claim",
         variant: "destructive",
       });
-      navigate("/claims");
+
+      if (is404) {
+        navigate("/claims");
+      }
     } finally {
       setLoading(false);
     }
@@ -117,10 +186,10 @@ export default function ClaimDetail() {
         setOwnerUser(null);
 
         try {
-          const actionsRes = await api.get(`/claim-actions/claim/${id}`);
-          if (!cancelled) setActions(actionsRes.data?.data || []);
+          const actRes = await api.get(`/claim-activities/claim/${id}`);
+          if (!cancelled) setActivities(actRes.data?.data || []);
         } catch {
-          if (!cancelled) setActions([]);
+          if (!cancelled) setActivities([]);
         }
 
         try {
@@ -177,6 +246,21 @@ export default function ClaimDetail() {
       cancelled = true;
     };
   }, [claim?.current_owner_id]);
+
+  useEffect(() => {
+    api
+      .get("/staff")
+      .then((res) => {
+        const map = {};
+        for (const s of res.data?.data || []) {
+          const email = String(s.email || "").toLowerCase();
+          const name = formatPersonName(s);
+          if (email && name) map[email] = name;
+        }
+        setNameByEmail(map);
+      })
+      .catch(() => {});
+  }, []);
 
   const isCurrentApprover =
     user &&
@@ -529,8 +613,13 @@ export default function ClaimDetail() {
                   Full registration incomplete
                 </p>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Secretary registered a notification only. Complete policy,
-                  amount, date of loss, and other details.
+                  Secretary registered a notification only (
+                  {claim.insurance_type}
+                  ). Complete policy number, claim amount, date of loss
+                  {claim.insurance_type === "Motor"
+                    ? ", plate number, and vehicle details"
+                    : ", and class-specific details"}
+                  .
                 </p>
               </div>
               <Button asChild size="sm">
@@ -731,9 +820,12 @@ export default function ClaimDetail() {
                 </span>
               )}
               {ownerDisplay.stage && (
-                <span className="flex items-center gap-1 text-blue-800">
+                <span
+                  className="flex items-center gap-1 text-blue-800"
+                  title={getStageDescription(ownerDisplay.stage)}
+                >
                   <Clock className="w-3.5 h-3.5" />
-                  {ownerDisplay.stage}
+                  {getStageLabel(ownerDisplay.stage)}
                 </span>
               )}
             </div>
@@ -825,73 +917,99 @@ export default function ClaimDetail() {
         </Card>
       )}
 
-      {/* Audit Trail */}
+      {/* Activity History — one latest record per workflow stage */}
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm">Activity History</CardTitle>
         </CardHeader>
         <CardContent>
-          {actions.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              No activity recorded yet.
-            </p>
-          ) : (
-            <div className="space-y-0">
-              {actions.map((a, i) => (
-                <div key={a.id} className="flex gap-3 pb-4 relative">
-                  {i < actions.length - 1 && (
-                    <div className="absolute left-[15px] top-8 bottom-0 w-px bg-border" />
-                  )}
-                  <div
-                    className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                      a.action_type === "Approved"
-                        ? "bg-emerald-100"
-                        : a.action_type === "Rejected"
-                          ? "bg-red-100"
-                          : a.action_type === "Returned"
-                            ? "bg-orange-100"
-                            : "bg-blue-100"
-                    }`}
-                  >
-                    {a.action_type === "Approved" ? (
-                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    ) : a.action_type === "Rejected" ? (
-                      <XCircle className="w-4 h-4 text-red-600" />
-                    ) : a.action_type === "Returned" ? (
-                      <RotateCcw className="w-4 h-4 text-orange-600" />
-                    ) : (
-                      <Clock className="w-4 h-4 text-blue-600" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-semibold">
-                        {a.action_type?.replace(/_/g, " ")}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        by {a.action_by_name}
-                      </span>
-                      {a.action_by_role && (
-                        <span className="text-[10px] text-muted-foreground">
-                          ({a.action_by_role})
-                        </span>
+          {(() => {
+            const history = buildStageHistory(activities);
+            if (history.length === 0) {
+              return (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  No stage activity recorded yet.
+                </p>
+              );
+            }
+
+            return (
+              <div className="space-y-0">
+                {history.map((a, i) => {
+                  const status = String(a.status || "Pending").replace(
+                    /_/g,
+                    " ",
+                  );
+                  const raw = a.responsible_user_name;
+                  const who =
+                    formatNameFromString(raw) ||
+                    (raw && String(raw).includes("@")
+                      ? nameByEmail[String(raw).toLowerCase()]
+                      : null) ||
+                    ROLE_LABELS[a.responsible_role] ||
+                    a.responsible_role ||
+                    "—";
+                  const when =
+                    a.completed_at ||
+                    a.started_at ||
+                    a.updatedAt ||
+                    a.createdAt;
+
+                  return (
+                    <div
+                      key={a.id || a.stage_name}
+                      className="flex gap-3 pb-4 relative"
+                    >
+                      {i < history.length - 1 && (
+                        <div className="absolute left-[15px] top-8 bottom-0 w-px bg-border" />
                       )}
+                      <div
+                        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                          status === "Completed"
+                            ? "bg-emerald-100"
+                            : status === "In Progress"
+                              ? "bg-blue-100"
+                              : status === "Skipped"
+                                ? "bg-slate-100"
+                                : "bg-amber-100"
+                        }`}
+                      >
+                        {status === "Completed" ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                        ) : (
+                          <Clock className="w-4 h-4 text-blue-600" />
+                        )}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span
+                            className="text-xs font-semibold"
+                            title={getStageDescription(a.stage_name)}
+                          >
+                            {getStageLabel(a.stage_name)}
+                          </span>
+                          <Badge variant="secondary" className="text-[10px]">
+                            {status}
+                          </Badge>
+                        </div>
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          by {who}
+                          {a.responsible_role
+                            ? ` · ${ROLE_LABELS[a.responsible_role] || a.responsible_role}`
+                            : ""}
+                        </p>
+                        {when && (
+                          <p className="text-[10px] text-muted-foreground mt-1">
+                            {moment(when).format("DD MMM YYYY, HH:mm")}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                    {a.comments && (
-                      <p className="text-xs text-muted-foreground mt-0.5">
-                        {a.comments}
-                      </p>
-                    )}
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      {moment(a.createdAt || a.created_date).format(
-                        "DD MMM YYYY, HH:mm:ss",
-                      )}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 

@@ -30,7 +30,15 @@ import {
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/components/ui/use-toast";
-import { FileText, Search, Eye, Pencil, Trash2 } from "lucide-react";
+import {
+  FileText,
+  Search,
+  Eye,
+  Pencil,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 import {
   STATUS_COLORS,
@@ -39,9 +47,12 @@ import {
   INSURANCE_TYPES,
   CLAIM_DIVISION_STATUS_LIST,
   GIO_STATUS_LIST,
+  getStageDescription,
 } from "@/lib/roleConfig";
 import EditClaimDialog from "@/components/claims/EditClaimDialog";
 import ExportButton from "@/components/ExportButton";
+
+const PAGE_SIZE = 50;
 
 /** Roles that work only on GIO cases */
 const GIO_ROLES = new Set([
@@ -81,6 +92,7 @@ export default function AllClaims() {
   const [editClaim, setEditClaim] = useState(null);
   const [deleteClaim, setDeleteClaim] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [page, setPage] = useState(1);
 
   const scope = useMemo(() => resolveScope(user?.role), [user?.role]);
 
@@ -178,6 +190,13 @@ export default function AllClaims() {
     const matchType = typeFilter === "all" || c.insurance_type === typeFilter;
     return matchSearch && matchStatus && matchType;
   });
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const startIdx = (safePage - 1) * PAGE_SIZE;
+  const pageRows = filtered.slice(startIdx, startIdx + PAGE_SIZE);
+  const showingFrom = filtered.length === 0 ? 0 : startIdx + 1;
+  const showingTo = Math.min(startIdx + PAGE_SIZE, filtered.length);
 
   const confirmDelete = async () => {
     if (!deleteClaim) return;
@@ -286,11 +305,20 @@ export default function AllClaims() {
             className="pl-9"
             placeholder="Search ref, claimant, plate..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
           />
         </div>
 
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
+        <Select
+          value={statusFilter}
+          onValueChange={(v) => {
+            setStatusFilter(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-56">
             <SelectValue placeholder="Status" />
           </SelectTrigger>
@@ -307,7 +335,13 @@ export default function AllClaims() {
           </SelectContent>
         </Select>
 
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
+        <Select
+          value={typeFilter}
+          onValueChange={(v) => {
+            setTypeFilter(v);
+            setPage(1);
+          }}
+        >
           <SelectTrigger className="w-44">
             <SelectValue placeholder="Type" />
           </SelectTrigger>
@@ -354,12 +388,13 @@ export default function AllClaims() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filtered.map((claim, idx) => {
+                {pageRows.map((claim, idx) => {
+                  const displayIndex = startIdx + idx + 1;
                   const isGio = claim.workflow_type === "GIO_Approval";
                   return (
                     <TableRow key={claim.id}>
                       <TableCell className="text-xs text-muted-foreground">
-                        {idx + 1}
+                        {displayIndex}
                       </TableCell>
                       <TableCell>
                         <Link
@@ -394,9 +429,11 @@ export default function AllClaims() {
                       </TableCell>
                       <TableCell className="text-sm">
                         {claim.workflow_stage ? (
-                          <Badge variant="outline" className="text-[10px]">
-                            {claim.workflow_stage}
-                          </Badge>
+                          <Badge
+                            variant="outline"
+                            className="text-[10px]"
+                            title={getStageDescription(claim.workflow_stage)}
+                          ></Badge>
                         ) : (
                           <span className="text-xs text-muted-foreground">
                             —
@@ -465,11 +502,40 @@ export default function AllClaims() {
               </TableBody>
             </Table>
           </div>
-          {filtered.length > 50 && (
-          <p className="text-xs text-center text-muted-foreground py-3">
-            Showing 50 of {filtered.length} claims
-          </p>
-        )}
+          {filtered.length > 0 && (
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t">
+              <p className="text-xs text-muted-foreground">
+                Showing {showingFrom}–{showingTo} of {filtered.length} claims
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  disabled={safePage <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                  Prev
+                </Button>
+                <span className="text-xs text-muted-foreground tabular-nums px-1">
+                  Page {safePage} of {totalPages}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1"
+                  disabled={safePage >= totalPages}
+                  onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
         </Card>
       )}
 
