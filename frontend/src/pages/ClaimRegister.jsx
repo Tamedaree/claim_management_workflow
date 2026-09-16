@@ -3,17 +3,11 @@ import { useOutletContext } from "react-router-dom";
 import { Card, CardContent } from "@/components/ui/card";
 import { REGISTRATION_TYPES } from "@/lib/claimRegistration";
 import NewClaimNotificationForm from "@/components/claims/NewClaimNotificationForm";
-import SubrogationForm from "@/components/claims/SubrogationForm";
-import ThirdPartyRecoveryForm from "@/components/claims/ThirdPartyRecoveryForm";
-import ReinsuranceForm from "@/components/claims/ReinsuranceForm";
 import NewGioCaseForm from "@/components/claims/NewGioCaseForm";
-import { FileText, Repeat, FileSearch, Shield, Briefcase } from "lucide-react";
+import { FileText, Briefcase } from "lucide-react";
 
 const TYPE_ICONS = {
   "New Claim Notification": FileText,
-  Subrogation: Repeat,
-  "Third Party Recovery": FileSearch,
-  Reinsurance: Shield,
   "GIO Case": Briefcase,
 };
 
@@ -25,12 +19,6 @@ export default function ClaimRegister() {
 
   const renderForm = () => {
     switch (registrationType) {
-      case "Subrogation":
-        return <SubrogationForm user={user} />;
-      case "Third Party Recovery":
-        return <ThirdPartyRecoveryForm user={user} />;
-      case "Reinsurance":
-        return <ReinsuranceForm user={user} />;
       case "GIO Case":
         return <NewGioCaseForm user={user} />;
       default:

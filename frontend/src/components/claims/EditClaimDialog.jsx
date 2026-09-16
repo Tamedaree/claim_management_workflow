@@ -21,9 +21,9 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import {
   INSURANCE_TYPES,
-  DEPARTMENTS,
   FORWARDING_OFFICE_TYPES,
   FORWARDING_OFFICES,
+  GIO_CASE_REASONS,
   toEnumKey,
 } from "@/lib/roleConfig";
 
@@ -84,12 +84,13 @@ function buildFormFromClaim(claim) {
       ? claim.originating_office_type.replace(/_/g, " ")
       : "",
     originating_office: claim.originating_office || "",
-    current_department: claim.current_department
-      ? claim.current_department.replace(/_/g, " ")
-      : "Claim Division",
-    workflow_type: claim.workflow_type || "Claim_Division",
     priority: claim.priority || "Medium",
     remarks: claim.remarks || "",
+    gio_case_reason: claim.gio_case_reason || "",
+    final_approval_amount:
+      claim.final_approval_amount != null && claim.final_approval_amount !== ""
+        ? String(claim.final_approval_amount)
+        : "",
   };
 }
 
@@ -161,12 +162,18 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
           ? toEnumKey(form.originating_office_type)
           : null,
         originating_office: form.originating_office || null,
-        current_department: form.current_department
-          ? toEnumKey(form.current_department)
-          : null,
-        workflow_type: form.workflow_type || null,
         priority: form.priority || "Medium",
         remarks: form.remarks || null,
+        ...(form.workflow_type === "GIO_Approval"
+          ? {
+              gio_case_reason: form.gio_case_reason || null,
+              final_approval_amount:
+                form.final_approval_amount !== "" &&
+                form.final_approval_amount != null
+                  ? parseFloat(String(form.final_approval_amount))
+                  : null,
+            }
+          : {}),
       });
 
       toast({ title: "Claim updated" });
@@ -192,9 +199,7 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
       <div className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label className="text-xs font-medium">
-              INSIS Claim Reference *
-            </Label>
+            <Label className="text-xs font-medium">Claim Reference *</Label>
             <Input
               value={form.claim_reference}
               onChange={(e) => handleChange("claim_reference", e.target.value)}
@@ -336,42 +341,47 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
             )}
           </div>
 
-          {/* Department */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Department</Label>
-            <Select
-              value={form.current_department}
-              onValueChange={(v) => handleChange("current_department", v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select department" />
-              </SelectTrigger>
-              <SelectContent>
-                {DEPARTMENTS.map((d) => (
-                  <SelectItem key={d} value={d}>
-                    {d.replace(/_/g, " ")}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {claim.workflow_type === "GIO_Approval" && (
+            <>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">Case reason</Label>
+                <Select
+                  value={form.gio_case_reason || undefined}
+                  onValueChange={(v) => handleChange("gio_case_reason", v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select case reason" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(GIO_CASE_REASONS || []).map((r) => {
+                      const value = typeof r === "string" ? r : r.value;
+                      const label =
+                        typeof r === "string" ? r.replace(/_/g, " ") : r.label;
+                      return (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
+              </div>
 
-          {/* Workflow Type */}
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium">Workflow Type</Label>
-            <Select
-              value={form.workflow_type}
-              onValueChange={(v) => handleChange("workflow_type", v)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select workflow" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Claim_Division">Claim Division</SelectItem>
-                <SelectItem value="GIO_Approval">GIO Approval</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">
+                  Final approval amount (ETB)
+                </Label>
+                <Input
+                  type="number"
+                  value={form.final_approval_amount ?? ""}
+                  onChange={(e) =>
+                    handleChange("final_approval_amount", e.target.value)
+                  }
+                  placeholder="0"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         <div className="space-y-1.5">

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useOutletContext, Link } from "react-router-dom";
 import api from "@/api/api";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,9 +29,47 @@ import {
   PRIORITY_COLORS,
   formatCurrency,
   APPROVER_ROLE_MAP,
+  ROLE_TO_APPROVER_LABEL,
+  isApprovalRole,
 } from "@/lib/roleConfig";
 import { processClaimAction } from "@/lib/claimWorkflow";
 import moment from "moment";
+
+/** Terminal / non-inbox statuses */
+const DONE_STATUSES = new Set([
+  "Approved",
+  "Rejected",
+  "Closed",
+  "Claim_Closed",
+  "Completed",
+  "Draft",
+]);
+
+/**
+ * Claim is assigned to this user (id, owner, or approver role/label match).
+ */
+function isAssignedToMe(claim, user) {
+  if (!user?.id || !claim) return false;
+
+  if (claim.current_approver_id === user.id) return true;
+  if (claim.current_owner_id === user.id) return true;
+
+  const role = user.role;
+  const myLabel = ROLE_TO_APPROVER_LABEL?.[role];
+  const mappedFromClaim = APPROVER_ROLE_MAP?.[claim.current_approver_role];
+
+  if (claim.current_approver_role === role) return true;
+  if (myLabel && claim.current_approver_role === myLabel) return true;
+  if (mappedFromClaim === role) return true;
+
+  return false;
+}
+
+function isActionable(claim) {
+  if (!claim?.status) return false;
+  if (DONE_STATUSES.has(claim.status)) return false;
+  return true;
+}
 
 export default function Approvals() {
   const { user } = useOutletContext();
@@ -43,9 +81,11 @@ export default function Approvals() {
   const [bulkModal, setBulkModal] = useState(null);
   const [comments, setComments] = useState("");
   const [processing, setProcessing] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Declare first
-  const loadData = async () => {
+  const canBulkDecide = isApprovalRole?.(user?.role) ?? false;
+
+  const loadData = useCallback(async () => {
     if (!user) return;
     setLoading(true);
     try {
@@ -57,22 +97,11 @@ export default function Approvals() {
       const all = claimsRes.data.data || [];
       const t = thresholdsRes.data.data || [];
 
-      const myRole = user.role;
-      const myClaims = all.filter((c) => {
-        const approverSystemRole = APPROVER_ROLE_MAP?.[c.current_approver_role];
-        return (
-          c.current_approver_id === user.id ||
-          (approverSystemRole === myRole &&
-            [
-              "Submitted",
-              "Under_Review",
-              "Escalated",
-              "Additional_Info_Requested",
-            ].includes(c.status))
-        );
-      });
+      const mine = all.filter(
+        (c) => isAssignedToMe(c, user) && isActionable(c),
+      );
 
-      setClaims(myClaims);
+      setClaims(mine);
       setThresholds(t);
     } catch {
       toast({
@@ -83,61 +112,23 @@ export default function Approvals() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [user, toast]);
 
-  // Then use effect
   useEffect(() => {
     if (!user) return;
-
     let cancelled = false;
 
     (async () => {
-      setLoading(true);
-      try {
-        const [claimsRes, thresholdsRes] = await Promise.all([
-          api.get("/claims"),
-          api.get("/approval-thresholds?is_active=true"),
-        ]);
-        if (cancelled) return;
-
-        const all = claimsRes.data.data || [];
-        const t = thresholdsRes.data.data || [];
-        const myRole = user.role;
-
-        const myClaims = all.filter((c) => {
-          const approverSystemRole =
-            APPROVER_ROLE_MAP?.[c.current_approver_role];
-          return (
-            c.current_approver_id === user.id ||
-            (approverSystemRole === myRole &&
-              [
-                "Submitted",
-                "Under_Review",
-                "Escalated",
-                "Additional_Info_Requested",
-              ].includes(c.status))
-          );
-        });
-
-        setClaims(myClaims);
-        setThresholds(t);
-      } catch {
-        if (!cancelled) {
-          toast({
-            title: "Error",
-            description: "Failed to load approvals.",
-            variant: "destructive",
-          });
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      await Promise.resolve();
+      if (cancelled) return;
+      await loadData();
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [toast, user]);
+  }, [user, loadData, refreshKey]);
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -146,8 +137,8 @@ export default function Approvals() {
     );
   }
 
-  const pending = claims.filter((c) =>
-    ["Submitted", "Under_Review", "Escalated"].includes(c.status),
+  const pending = claims.filter(
+    (c) => c.status !== "Additional_Info_Requested",
   );
   const infoReq = claims.filter(
     (c) => c.status === "Additional_Info_Requested",
@@ -155,8 +146,9 @@ export default function Approvals() {
   const all = claims;
 
   const isAging = (claim) => {
-    if (!claim.submission_date) return false;
-    return moment().diff(moment(claim.submission_date), "days") > 5;
+    const d = claim.submission_date || claim.createdAt || claim.created_date;
+    if (!d) return false;
+    return moment().diff(moment(d), "days") > 5;
   };
 
   const toggleSelect = (id) => {
@@ -176,6 +168,15 @@ export default function Approvals() {
   };
 
   const handleBulkAction = async (actionType) => {
+    if (!canBulkDecide) {
+      toast({
+        title: "Not allowed",
+        description: "Bulk approve/reject is only for approval roles.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (actionType === "Rejected" && !comments.trim()) {
       toast({
         title: "Comments required",
@@ -209,7 +210,7 @@ export default function Approvals() {
         failed > 0 ? `, ${failed} failed` : ""
       }.`,
     });
-    loadData();
+    setRefreshKey((k) => k + 1);
   };
 
   const ClaimRow = ({ claim }) => {
@@ -221,12 +222,14 @@ export default function Approvals() {
         }`}
       >
         <CardContent className="p-4 flex items-center gap-3">
-          <Checkbox
-            checked={isSelected}
-            onCheckedChange={() => toggleSelect(claim.id)}
-            onClick={(e) => e.stopPropagation()}
-            aria-label="Select claim"
-          />
+          {canBulkDecide && (
+            <Checkbox
+              checked={isSelected}
+              onCheckedChange={() => toggleSelect(claim.id)}
+              onClick={(e) => e.stopPropagation()}
+              aria-label="Select claim"
+            />
+          )}
           <Link
             to={`/claims/${claim.id}`}
             className="flex items-center justify-between flex-1 min-w-0"
@@ -236,10 +239,18 @@ export default function Approvals() {
                 <ClipboardCheck className="w-5 h-5 text-amber-600" />
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <p className="text-sm font-semibold truncate">
                     {claim.claim_reference}
                   </p>
+                  {claim.workflow_type === "GIO_Approval" && (
+                    <Badge
+                      variant="secondary"
+                      className="text-[9px] bg-purple-100 text-purple-800"
+                    >
+                      GIO
+                    </Badge>
+                  )}
                   {isAging(claim) && (
                     <span className="flex items-center gap-0.5 text-[10px] text-red-600 font-medium shrink-0">
                       <AlertTriangle className="w-3 h-3" /> Aging
@@ -253,6 +264,7 @@ export default function Approvals() {
                     : claim.workflow_type
                       ? claim.workflow_type.replace(/_/g, " ")
                       : "—"}
+                  {claim.workflow_stage ? ` · ${claim.workflow_stage}` : ""}
                 </p>
               </div>
             </div>
@@ -263,20 +275,20 @@ export default function Approvals() {
                 </p>
                 <p className="text-[10px] text-muted-foreground flex items-center gap-1 justify-end">
                   <Clock className="w-3 h-3" />
-                  {claim.submission_date
-                    ? moment(claim.submission_date).fromNow()
+                  {claim.submission_date || claim.createdAt
+                    ? moment(claim.submission_date || claim.createdAt).fromNow()
                     : "—"}
                 </p>
               </div>
               <Badge
                 variant="secondary"
-                className={`text-[10px] ${STATUS_COLORS[claim.status]}`}
+                className={`text-[10px] ${STATUS_COLORS[claim.status] || ""}`}
               >
                 {claim.status?.replace(/_/g, " ")}
               </Badge>
               <Badge
                 variant="secondary"
-                className={`text-[10px] ${PRIORITY_COLORS[claim.priority]}`}
+                className={`text-[10px] ${PRIORITY_COLORS[claim.priority] || ""}`}
               >
                 {claim.priority}
               </Badge>
@@ -289,6 +301,7 @@ export default function Approvals() {
   };
 
   const SelectAllBar = ({ list }) => {
+    if (!canBulkDecide) return null;
     const ids = list.map((c) => c.id);
     const allSelected =
       ids.length > 0 && ids.every((id) => selected.includes(id));
@@ -363,8 +376,7 @@ export default function Approvals() {
         </TabsContent>
       </Tabs>
 
-      {/* Bulk Action Bar */}
-      {selected.length > 0 && (
+      {canBulkDecide && selected.length > 0 && (
         <div className="fixed bottom-0 left-0 right-0 z-40 bg-card border-t shadow-lg">
           <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
@@ -399,7 +411,6 @@ export default function Approvals() {
         </div>
       )}
 
-      {/* Bulk Action Dialog */}
       <Dialog
         open={!!bulkModal}
         onOpenChange={() => {

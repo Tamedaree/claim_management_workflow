@@ -65,19 +65,21 @@ function formatNameFromString(name) {
 function buildStageHistory(activityList = []) {
   const byStage = new Map();
 
+  const rank = (s) => {
+    const x = String(s || "");
+    if (x === "Completed") return 4;
+    if (x === "In_Progress" || x === "In Progress") return 3;
+    if (x === "On_Hold" || x === "On Hold") return 2;
+    if (x === "Skipped") return 1;
+    return 0; // Pending
+  };
+
   for (const a of activityList) {
+    // Skip pure pending placeholders (never worked)
+    if (rank(a.status) === 0) continue;
+
     const key = a.stage_name || `order-${a.stage_order}`;
     const prev = byStage.get(key);
-
-    // Prefer Completed > In_Progress > On_Hold > others; then newest date
-    const rank = (s) => {
-      const x = String(s || "");
-      if (x === "Completed") return 4;
-      if (x === "In_Progress" || x === "In Progress") return 3;
-      if (x === "On_Hold" || x === "On Hold") return 2;
-      if (x === "Skipped") return 1;
-      return 0;
-    };
 
     const aTime = new Date(
       a.completed_at || a.started_at || a.updatedAt || a.createdAt || 0,
@@ -101,9 +103,13 @@ function buildStageHistory(activityList = []) {
     }
   }
 
-  return [...byStage.values()].sort(
-    (a, b) => (a.stage_order || 0) - (b.stage_order || 0),
-  );
+  return [...byStage.values()].sort((a, b) => {
+    const t = (x) =>
+      new Date(
+        x.completed_at || x.started_at || x.updatedAt || x.createdAt || 0,
+      ).getTime();
+    return t(b) - t(a); // newest work first
+  });
 }
 
 export default function ClaimDetail() {
@@ -723,6 +729,213 @@ export default function ClaimDetail() {
         </Card>
       </div>
 
+      {claim.workflow_type === "GIO_Approval" && (
+        <Card className="border-0 shadow-sm overflow-hidden border border-purple-100/80 bg-gradient-to-br from-purple-50/40 via-background to-background">
+          <CardHeader className="pb-3 border-b border-purple-100/60">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <CardTitle className="text-sm font-semibold tracking-tight flex items-center gap-2">
+                <span className="inline-flex h-7 w-7 items-center justify-center rounded-lg bg-purple-100 text-purple-700 text-xs font-bold">
+                  GIO
+                </span>
+                Case details
+              </CardTitle>
+              {claim.gio_case_reason && (
+                <Badge className="bg-purple-100 text-purple-800 hover:bg-purple-100 text-[10px] font-medium">
+                  {claim.gio_case_reason.replace(/_/g, " ")}
+                </Badge>
+              )}
+            </div>
+          </CardHeader>
+
+          <CardContent className="pt-4 space-y-4">
+            {/* Compact metric grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="rounded-xl border bg-card/80 p-3 shadow-sm">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                  Claim number
+                </p>
+                <p
+                  className="text-sm font-semibold font-mono truncate"
+                  title={claim.claim_number || undefined}
+                >
+                  {claim.claim_number || "—"}
+                </p>
+              </div>
+
+              <div className="rounded-xl border bg-card/80 p-3 shadow-sm">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                  Final approval
+                </p>
+                <p className="text-sm font-semibold tabular-nums">
+                  {claim.final_approval_amount != null
+                    ? formatCurrency(claim.final_approval_amount)
+                    : "—"}
+                </p>
+              </div>
+
+              {(claim.insurance_type === "Motor" ||
+                claim.motor_vehicle_type) && (
+                <div className="rounded-xl border bg-card/80 p-3 shadow-sm">
+                  <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                    Vehicle type
+                  </p>
+                  <p className="text-sm font-semibold">
+                    {claim.motor_vehicle_type || "—"}
+                  </p>
+                </div>
+              )}
+
+              <div className="rounded-xl border bg-card/80 p-3 shadow-sm">
+                <p className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">
+                  Case reason
+                </p>
+                <p className="text-sm font-medium leading-snug">
+                  {claim.gio_case_reason?.replace(/_/g, " ") || "—"}
+                </p>
+              </div>
+            </div>
+
+            {/* Flags */}
+            {(claim.is_recovery ||
+              claim.is_subrogation ||
+              claim.is_reinsurance ||
+              claim.is_rebid ||
+              claim.has_independent_assessor) && (
+              <div className="flex flex-wrap gap-1.5">
+                {claim.is_recovery && (
+                  <Badge className="bg-blue-100 text-blue-800 text-[10px]">
+                    Third party recovery
+                  </Badge>
+                )}
+                {claim.is_subrogation && (
+                  <Badge className="bg-amber-100 text-amber-800 text-[10px]">
+                    Subrogation
+                  </Badge>
+                )}
+                {claim.is_reinsurance && (
+                  <Badge className="bg-purple-100 text-purple-800 text-[10px]">
+                    Reinsurance
+                  </Badge>
+                )}
+                {claim.is_rebid && (
+                  <Badge className="bg-cyan-100 text-cyan-800 text-[10px]">
+                    Rebid
+                  </Badge>
+                )}
+                {claim.has_independent_assessor && (
+                  <Badge className="bg-slate-100 text-slate-800 text-[10px]">
+                    Independent assessor
+                  </Badge>
+                )}
+              </div>
+            )}
+
+            {/* Detail panels */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {claim.is_recovery &&
+                claim.registration_data?.third_party_recovery && (
+                  <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-3 space-y-1.5 text-xs">
+                    <p className="font-semibold text-sm text-blue-900">
+                      Third party recovery
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Party · </span>
+                      {claim.registration_data.third_party_recovery
+                        .third_party_name || "—"}
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Plate · </span>
+                      <span className="font-mono">
+                        {claim.registration_data.third_party_recovery
+                          .third_party_plate_number || "—"}
+                      </span>
+                    </p>
+                    <p>
+                      <span className="text-muted-foreground">Amount · </span>
+                      {formatCurrency(
+                        claim.registration_data.third_party_recovery
+                          .recovery_amount,
+                      )}
+                    </p>
+                    {claim.registration_data.third_party_recovery
+                      .responsible_party_details && (
+                      <p className="text-muted-foreground pt-1">
+                        {
+                          claim.registration_data.third_party_recovery
+                            .responsible_party_details
+                        }
+                      </p>
+                    )}
+                  </div>
+                )}
+
+              {claim.is_subrogation && claim.registration_data?.subrogation && (
+                <div className="rounded-xl border border-amber-100 bg-amber-50/50 p-3 space-y-1.5 text-xs">
+                  <p className="font-semibold text-sm text-amber-900">
+                    Subrogation
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Against · </span>
+                    {claim.registration_data.subrogation.subrogation_against ||
+                      "—"}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Recover · </span>
+                    {formatCurrency(
+                      claim.registration_data.subrogation.amount_to_recover,
+                    )}
+                  </p>
+                </div>
+              )}
+
+              {claim.is_reinsurance && claim.registration_data?.reinsurance && (
+                <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-3 space-y-1.5 text-xs">
+                  <p className="font-semibold text-sm text-purple-900">
+                    Reinsurance
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Reinsurer · </span>
+                    {claim.registration_data.reinsurance.reinsurer_name || "—"}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">
+                      Recoverable ·{" "}
+                    </span>
+                    {formatCurrency(
+                      claim.registration_data.reinsurance.recoverable_amount,
+                    )}
+                  </p>
+                </div>
+              )}
+
+              {claim.is_rebid && (
+                <div className="rounded-xl border border-cyan-100 bg-cyan-50/50 p-3 space-y-1.5 text-xs">
+                  <p className="font-semibold text-sm text-cyan-900">Rebid</p>
+                  <p>
+                    <span className="text-muted-foreground">Garages · </span>
+                    {(claim.rebid_participating_garages || []).join(", ") ||
+                      "—"}
+                  </p>
+                  <p>
+                    <span className="text-muted-foreground">Winner · </span>
+                    {claim.rebid_winner_garage || "—"}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {claim.has_independent_assessor && (
+              <p className="text-xs text-muted-foreground">
+                Independent assessor:{" "}
+                <span className="font-medium text-foreground">
+                  {claim.independent_assessor_name || "—"}
+                </span>
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Approval Chain */}
       {chain.length > 0 && userIsApprover && (
         <Card className="border-0 shadow-sm">
@@ -917,37 +1130,42 @@ export default function ClaimDetail() {
         </Card>
       )}
 
-      {/* Activity History — one latest record per workflow stage */}
-      <Card className="border-0 shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Activity History</CardTitle>
+      {/* Activity History — only stages that were worked */}
+      <Card className="border-0 shadow-sm overflow-hidden">
+        <CardHeader className="pb-3 border-b bg-muted/30">
+          <CardTitle className="text-sm font-semibold tracking-tight">
+            Activity History
+          </CardTitle>
+          <p className="text-[11px] text-muted-foreground font-normal mt-0.5">
+            Stages that were started or completed — not the full workflow list
+          </p>
         </CardHeader>
-        <CardContent>
+        <CardContent className="pt-4">
           {(() => {
             const history = buildStageHistory(activities);
             if (history.length === 0) {
               return (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  No stage activity recorded yet.
+                <p className="text-sm text-muted-foreground py-8 text-center">
+                  No work recorded yet.
                 </p>
               );
             }
 
             return (
-              <div className="space-y-0">
-                {history.map((a, i) => {
-                  const status = String(a.status || "Pending").replace(
-                    /_/g,
-                    " ",
-                  );
+              <ul className="space-y-3">
+                {history.map((a) => {
+                  const statusRaw = String(a.status || "");
+                  const status = statusRaw.replace(/_/g, " ");
                   const raw = a.responsible_user_name;
-                  const who =
+                  const person =
                     formatNameFromString(raw) ||
                     (raw && String(raw).includes("@")
                       ? nameByEmail[String(raw).toLowerCase()]
                       : null) ||
+                    null;
+                  const roleLabel =
                     ROLE_LABELS[a.responsible_role] ||
-                    a.responsible_role ||
+                    a.responsible_role?.replace(/_/g, " ") ||
                     "—";
                   const when =
                     a.completed_at ||
@@ -955,59 +1173,83 @@ export default function ClaimDetail() {
                     a.updatedAt ||
                     a.createdAt;
 
+                  const tone =
+                    statusRaw === "Completed"
+                      ? {
+                          dot: "bg-emerald-500",
+                          badge: "bg-emerald-100 text-emerald-800",
+                          ring: "ring-emerald-100",
+                        }
+                      : statusRaw === "In_Progress" || status === "In Progress"
+                        ? {
+                            dot: "bg-blue-500",
+                            badge: "bg-blue-100 text-blue-800",
+                            ring: "ring-blue-100",
+                          }
+                        : statusRaw === "On_Hold" || status === "On Hold"
+                          ? {
+                              dot: "bg-amber-500",
+                              badge: "bg-amber-100 text-amber-800",
+                              ring: "ring-amber-100",
+                            }
+                          : {
+                              dot: "bg-slate-400",
+                              badge: "bg-slate-100 text-slate-700",
+                              ring: "ring-slate-100",
+                            };
+
                   return (
-                    <div
+                    <li
                       key={a.id || a.stage_name}
-                      className="flex gap-3 pb-4 relative"
+                      className={`relative flex gap-3 rounded-xl border bg-card p-3.5 shadow-sm ring-1 ${tone.ring}`}
                     >
-                      {i < history.length - 1 && (
-                        <div className="absolute left-[15px] top-8 bottom-0 w-px bg-border" />
-                      )}
                       <div
-                        className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                          status === "Completed"
-                            ? "bg-emerald-100"
-                            : status === "In Progress"
-                              ? "bg-blue-100"
-                              : status === "Skipped"
-                                ? "bg-slate-100"
-                                : "bg-amber-100"
-                        }`}
-                      >
-                        {status === "Completed" ? (
-                          <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                        ) : (
-                          <Clock className="w-4 h-4 text-blue-600" />
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
+                        className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${tone.dot}`}
+                      />
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="flex flex-wrap items-center gap-2 justify-between">
                           <span
-                            className="text-xs font-semibold"
+                            className="text-sm font-semibold"
                             title={getStageDescription(a.stage_name)}
                           >
                             {getStageLabel(a.stage_name)}
                           </span>
-                          <Badge variant="secondary" className="text-[10px]">
+                          <Badge className={`text-[10px] ${tone.badge}`}>
                             {status}
                           </Badge>
                         </div>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">
-                          by {who}
-                          {a.responsible_role
-                            ? ` · ${ROLE_LABELS[a.responsible_role] || a.responsible_role}`
-                            : ""}
-                        </p>
-                        {when && (
-                          <p className="text-[10px] text-muted-foreground mt-1">
-                            {moment(when).format("DD MMM YYYY, HH:mm")}
+
+                        <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                          <span>
+                            <span className="text-foreground/70">Role · </span>
+                            {roleLabel}
+                          </span>
+                          {person && (
+                            <span>
+                              <span className="text-foreground/70">By · </span>
+                              {person}
+                            </span>
+                          )}
+                          {when && (
+                            <span>
+                              <span className="text-foreground/70">
+                                When ·{" "}
+                              </span>
+                              {moment(when).format("DD MMM YYYY, HH:mm")}
+                            </span>
+                          )}
+                        </div>
+
+                        {a.comments && (
+                          <p className="text-xs text-muted-foreground italic border-l-2 border-muted pl-2 mt-1">
+                            {a.comments}
                           </p>
                         )}
                       </div>
-                    </div>
+                    </li>
                   );
                 })}
-              </div>
+              </ul>
             );
           })()}
         </CardContent>

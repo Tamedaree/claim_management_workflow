@@ -2,7 +2,10 @@ import api from "@/api/api";
 import { ROLE_LABELS, toEnumKey, GIO_WORKFLOW_STAGES } from "@/lib/roleConfig";
 
 // Forwarding office types per registration type
-export const NEW_CLAIM_OFFICE_TYPES = ["Kefla Ager Branch", "Border Branch"];
+export const NEW_CLAIM_OFFICE_TYPES = [
+  "District Office",
+  "Kefla Ager Branch",
+];
 export const FORWARDED_CLAIM_OFFICE_TYPES = [
   "Service Center",
   "District Office",
@@ -12,22 +15,7 @@ export const REGISTRATION_TYPES = [
   {
     value: "New Claim Notification",
     label: "New Claim Notification",
-    description: "Border Branch / Kefla Ager Branch",
-  },
-  {
-    value: "Subrogation",
-    label: "Subrogation",
-    description: "Recovery from responsible third party",
-  },
-  {
-    value: "Third Party Recovery",
-    label: "Third Party Recovery (TL)",
-    description: "Total loss recovery from third party",
-  },
-  {
-    value: "Reinsurance",
-    label: "Reinsurance",
-    description: "Reinsurance recoverable claim",
+    description: "Kefla Ager Branch",
   },
   {
     value: "GIO Case",
@@ -268,6 +256,24 @@ export function generateGioReference() {
   return `GIO-${y}-${n}`;
 }
 
+export async function findClaimsByClaimNumber(claimNumber) {
+  const n = (claimNumber || "").trim();
+  if (!n) return [];
+  const res = await api.get(
+    `/claims?claim_number=${encodeURIComponent(n)}&limit=20`,
+  );
+  return res.data?.data || [];
+}
+
+export function isClaimOpen(c) {
+  if (!c) return false;
+  if (c.status === "Closed" || c.status === "Rejected") return false;
+  if (c.workflow_stage === "GIO Case Closure" && c.status === "Closed")
+    return false;
+  // still active
+  return true;
+}
+
 /**
  * Register a GIO case (workflow_type = GIO_Approval)
  * form.gio_case_reason must be Prisma enum key (e.g. Payment_Approval)
@@ -305,6 +311,26 @@ export async function registerGioCase(form, user, { asDraft = false } = {}) {
     originating_office_type: toEnumKey(form.originating_office_type),
     received_reference_number: form.received_reference_number || null,
     date_received: form.date_received || null,
+    claim_number: form.claim_number || null,
+    final_approval_amount:
+      form.final_approval_amount != null && form.final_approval_amount !== ""
+        ? Number(form.final_approval_amount)
+        : null,
+    motor_vehicle_type: form.motor_vehicle_type || null,
+
+    is_recovery: !!form.is_recovery,
+    is_subrogation: !!form.is_subrogation,
+    is_reinsurance: !!form.is_reinsurance,
+    is_rebid: !!form.is_rebid,
+    has_independent_assessor: !!form.has_independent_assessor,
+
+    rebid_participating_garages: Array.isArray(form.rebid_participating_garages)
+      ? form.rebid_participating_garages
+      : [],
+    rebid_winner_garage: form.rebid_winner_garage || null,
+    independent_assessor_name: form.independent_assessor_name || null,
+
+    registration_data: form.registration_data || null,
     workflow_type: "GIO_Approval",
     gio_case_reason,
     priority: form.priority || "Medium",

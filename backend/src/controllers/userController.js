@@ -90,6 +90,9 @@ export const getUsers = async (req, res, next) => {
         is_active: true,
         createdAt: true,
         updatedAt: true,
+        // needed for admin dashboard
+        failed_login_attempts: true,
+        locked_until: true,
       },
       orderBy: { createdAt: "desc" },
     });

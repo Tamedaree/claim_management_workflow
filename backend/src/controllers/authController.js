@@ -2,6 +2,8 @@ import bcrypt from "bcryptjs";
 import prisma from "../config/db.js";
 import { generateToken } from "../utils/generateToken.js";
 import ApiError from "../utils/ApiError.js";
+import { setAuditActor } from "../middleware/auditContext.js";
+import { notifyAdmins } from "../utils/notifyAdmins.js";
 
 // @desc    Register new user
 // @route   POST /api/auth/register
@@ -74,22 +76,74 @@ export const login = async (req, res, next) => {
     }
 
     const user = await prisma.user.findUnique({ where: { email } });
-    console.log("USER:", user);
 
-    if (!user || !(await bcrypt.compare(password, user.password))) {
+    const settings = await prisma.systemSettings.findFirst({
+      where: { key: "singleton" },
+    });
+    const maxAttempts = settings?.sec_max_failed_attempts ?? 5;
+    const lockMinutes = settings?.sec_lockout_minutes ?? 15;
+
+    // Unknown email — same message (no user enumeration)
+    if (!user) {
       throw new ApiError(401, "Invalid email or password");
     }
 
-    console.log("PASSWORD VERIFIED");
+    // Already locked?
+    if (user.locked_until && user.locked_until > new Date()) {
+      throw new ApiError(
+        403,
+        "Account temporarily locked due to too many failed logins. Try again later.",
+      );
+    }
+
+    const passwordOk = await bcrypt.compare(password, user.password);
+
+    if (!passwordOk) {
+      const attempts = (user.failed_login_attempts || 0) + 1;
+      const data = { failed_login_attempts: attempts };
+
+      if (attempts >= maxAttempts) {
+        data.locked_until = new Date(Date.now() + lockMinutes * 60 * 1000);
+      }
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data,
+      });
+
+      // Optional: AccessLog LOGIN_FAILED here
+
+      if (attempts >= maxAttempts) {
+        try {
+          await notifyAdmins({
+            title: "Account locked",
+            message: `Account ${user.email} locked after ${attempts} failed login attempts (lock ${lockMinutes} min).`,
+            type: "account_locked",
+          });
+        } catch {
+          // never block login response on notify failure
+        }
+      }
+
+      throw new ApiError(401, "Invalid email or password");
+    }
 
     if (!user.is_active) {
       throw new ApiError(403, "Your account is deactivated");
     }
-    console.log("USER ACTIVE");
+
+    // Success — clear lock counters
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        failed_login_attempts: 0,
+        locked_until: null,
+      },
+    });
 
     const token = generateToken(user.id);
     req.user = user;
-    console.log("TOKEN GENERATED");
+    setAuditActor(user);
 
     res.json({
       success: true,
@@ -225,6 +279,16 @@ export const changePassword = async (req, res, next) => {
       data: { password: hashed, must_change_password: false },
     });
 
+    try {
+      await notifyAdmins({
+        title: "Password changed",
+        message: `${user.email} (${user.role}) changed their password.`,
+        type: "password_changed",
+      });
+    } catch {
+      // non-fatal
+    }
+
     res.json({
       success: true,
       message: "Password changed successfully",
@@ -296,6 +360,16 @@ export const resetStaffPassword = async (req, res, next) => {
         must_change_password: true,
       },
     });
+
+    try {
+      await notifyAdmins({
+        title: "Password reset by admin",
+        message: `Temporary password set for ${staff.email}. User must change it on next login.`,
+        type: "security_alert",
+      });
+    } catch {
+      // non-fatal
+    }
 
     // Never persist plain password in DB
     res.json({

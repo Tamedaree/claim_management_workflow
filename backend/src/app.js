@@ -20,6 +20,8 @@ import notificationRoutes from "./routes/notifications.js";
 import workflowStageRoutes from "./routes/workflowStage.js";
 import approvalThresholdRoutes from "./routes/approvalThreshold.js";
 import auditRoutes from "./routes/audit.js";
+import garageRoutes from "./routes/garages.js";
+import settingsRoutes from "./routes/settings.js";
 
 const app = express();
 
@@ -36,9 +38,7 @@ app.use(
   }),
 );
 
-const allowedOrigins = (
-  process.env.FRONTEND_URL || "http://localhost:5173"
-)
+const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -117,6 +117,8 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/workflow-stages", workflowStageRoutes);
 app.use("/api/approval-thresholds", approvalThresholdRoutes);
 app.use("/api/audit", auditRoutes);
+app.use("/api/garages", garageRoutes);
+app.use("/api/settings", settingsRoutes);
 
 app.use(errorHandler);
 

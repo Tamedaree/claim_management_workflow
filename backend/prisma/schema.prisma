@@ -12,12 +12,13 @@ enum Role {
   admin
   secretary
   claim_adjuster
-  gio_claim_adjuster
+  gio_principal_claim_officer
   surveyor
   principal_claim_officer
   claim_manager
   gio_claim_manager
   director
+  senior_director
   chief_of_gio
   ceo
 }
@@ -140,15 +141,18 @@ enum ClaimStatus {
   Claim_Closed
   Returned_for_Correction
   Escalated_to_GIO
-
-  // GIO case granular statuses
+  
+// ===== GIO case statuses =====
   Case_Received
   Pending_GIO_Assignment
-  Assigned_to_GIO_Claim_Adjuster
+  Director_Assignment_Pending
+  Manager_Assignment_Pending
+  Assigned_to_GIO_Principal
   Document_Review_Pending
   GIO_Review_In_Progress
   Claim_Manager_Review_Pending
   Director_Decision_Pending
+  Senior_Director_Decision_Pending
   Chief_of_GIO_Approval_Pending
   CEO_Approval_Pending
   Returned_to_Originating_Office
@@ -264,6 +268,12 @@ enum NotificationType {
   claim_escalated
   info_requested
   general
+  // Admin / security
+  account_locked
+  password_changed
+  security_alert
+  system_health
+  backup_failed
 }
 
 enum WorkflowStageType {
@@ -286,6 +296,8 @@ model User {
   role               Role             @default(claim_adjuster)
   work_location_type WorkLocationType @default(Head_Office)
   must_change_password Boolean        @default(false)
+  failed_login_attempts Int           @default(0)
+  locked_until       DateTime?
   department         Department?
   work_location      String?
   phone              String?
@@ -334,6 +346,15 @@ model Claim {
   originating_office_type    OriginatingOfficeType?
   received_reference_number  String?
   date_received               DateTime?
+  claim_number               String?
+  final_approval_amount      Float?
+  motor_vehicle_type         String?
+  is_rebid                   Boolean  @default(false)
+  rebid_participating_garages String[] @default([])
+  rebid_winner_garage        String?
+  garage_name                String?
+  has_independent_assessor   Boolean  @default(false)
+  independent_assessor_name  String?
   workflow_type               WorkflowType           @default(Claim_Division)
   gio_case_reason              GioCaseReason?
   status                     ClaimStatus            @default(Draft)
@@ -367,6 +388,9 @@ model Claim {
   is_recovery                    Boolean                @default(false)
   is_reinsurance                 Boolean                @default(false)
   registration_complete          Boolean                @default(false)
+  is_deleted Boolean                                    @default(false)
+  deleted_at                     DateTime?
+  deleted_by_id                  String?
   registration_completed_by_id   String?
   registration_completed_by_name String?
   registration_completed_at      DateTime?
@@ -460,6 +484,13 @@ model ClaimGarage {
   claim              Claim        @relation(fields: [claim_id], references: [id], onDelete: Cascade)
 }
 
+model Garage {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  is_active Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
 model Notification {
   id              String           @id @default(cuid())
   user_id         String
@@ -487,6 +518,59 @@ model WorkflowStage {
   is_configurable            Boolean              @default(true)
   createdAt                  DateTime             @default(now())
   updatedAt                  DateTime             @updatedAt
+}
+
+model SystemSettings {
+  id                                String   @id @default(cuid())
+  key                               String   @unique @default("singleton")
+
+  audit_enabled                     Boolean  @default(true)
+  audit_retention_days              Int      @default(365)
+  audit_track_login_logout          Boolean  @default(true)
+  audit_track_claim_actions         Boolean  @default(true)
+  audit_track_gio_actions           Boolean  @default(true)
+  audit_track_user_actions          Boolean  @default(true)
+  audit_track_document_actions      Boolean  @default(true)
+  audit_track_settings_changes      Boolean  @default(true)
+  audit_export_allowed_roles        String[] @default(["admin"])
+
+  system_name                       String   @default("EIC Claim Management System")
+  organization_name                 String   @default("Ethiopian Insurance Corporation (EIC)")
+  system_version                    String   @default("1.0.0")
+  environment                       String   @default("Production")
+  timezone                          String   @default("Africa/Addis_Ababa")
+  date_format                       String   @default("DD MMM YYYY")
+  time_format                       String   @default("HH:mm")
+  default_currency                  String   @default("ETB")
+  system_logo_url                   String?
+  application_status                String   @default("Active")
+  last_system_update                DateTime?
+
+  doc_max_upload_mb                 Int      @default(10)
+  doc_allowed_types                 String[] @default(["pdf", "jpg", "jpeg", "png", "docx", "xlsx"])
+  doc_categories                    String[] @default(["Claim Form", "Police Report", "Photos", "Invoice", "Medical Report", "Other"])
+  doc_max_files_per_submission      Int      @default(10)
+  doc_allow_replace                 Boolean  @default(true)
+  doc_allow_download                Boolean  @default(true)
+  doc_allow_delete                  Boolean  @default(false)
+  doc_require_remarks_on_change     Boolean  @default(true)
+
+  sec_min_password_length           Int      @default(8)
+  sec_require_uppercase             Boolean  @default(true)
+  sec_require_number                Boolean  @default(true)
+  sec_require_special_char          Boolean  @default(false)
+  sec_max_failed_attempts           Int      @default(5)
+  sec_lockout_minutes               Int      @default(15)
+  sec_jwt_expiry_minutes            Int      @default(60)
+  sec_session_expiry_hours          Int      @default(24)
+  sec_auto_logout_minutes           Int      @default(30)
+  sec_require_password_change_new_account Boolean @default(true)
+  sec_prevent_password_reuse_count  Int      @default(3)
+  sec_enable_security_notifications Boolean  @default(true)
+
+  updatedAt                         DateTime @updatedAt
+  updated_by_id                     String?
+  updated_by_name                   String?
 }
 
 enum AuditAction {

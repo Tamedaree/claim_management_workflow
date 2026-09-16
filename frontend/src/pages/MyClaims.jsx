@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useOutletContext, Link } from "react-router-dom";
 import api from "@/api/api";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,7 +20,28 @@ import {
   CLAIM_DIVISION_STATUS_LIST,
   GIO_STATUS_LIST,
   getWorkflowScopeForRole,
+  ROLE_TO_APPROVER_LABEL,
+  APPROVER_ROLE_MAP,
 } from "@/lib/roleConfig";
+
+function isAssignedToMe(claim, user) {
+  if (!user?.id || !claim) return false;
+
+  if (claim.current_approver_id === user.id) return true;
+  if (claim.current_owner_id === user.id) return true;
+  if (claim.assigned_performer_id === user.id) return true;
+  if (claim.submitted_by_id === user.id) return true;
+
+  const role = user.role;
+  const myLabel = ROLE_TO_APPROVER_LABEL?.[role];
+  const mapped = APPROVER_ROLE_MAP?.[claim.current_approver_role];
+
+  if (claim.current_approver_role === role) return true;
+  if (myLabel && claim.current_approver_role === myLabel) return true;
+  if (mapped === role) return true;
+
+  return false;
+}
 
 export default function MyClaims() {
   const { user } = useOutletContext();
@@ -33,9 +54,6 @@ export default function MyClaims() {
   const roleScope = getWorkflowScopeForRole(user?.role);
   const isScopedAll = roleScope === "all";
   const isScopedGio = roleScope === "GIO_Approval";
-
-  // Effective workflow filter: scoped roles are locked to their scope
-  // regardless of local state; only "all" roles get to pick freely.
   const effectiveWorkflowFilter = isScopedAll ? workflowFilter : roleScope;
 
   useEffect(() => {
@@ -46,73 +64,29 @@ export default function MyClaims() {
     (async () => {
       setLoading(true);
       try {
-        let data = [];
+        // Same idea as ApproverDashboard: load scope, then filter "mine"
+        const q =
+          roleScope === "GIO_Approval"
+            ? "?workflow_type=GIO_Approval"
+            : roleScope === "Claim_Division"
+              ? "?workflow_type=Claim_Division"
+              : "";
 
-        // Submitters: secretary, etc.
-        if (["secretary", "admin"].includes(user.role)) {
-          const res = await api.get(`/claims?submitted_by_id=${user.id}`);
-          data = res.data.data || [];
-        }
-        // Claim / GIO adjusters: assigned or owned
-        else if (
-          ["claim_adjuster", "gio_claim_adjuster", "surveyor"].includes(
-            user.role,
-          )
-        ) {
-          const [a, b] = await Promise.all([
-            api
-              .get(`/claims?assigned_performer_id=${user.id}`)
-              .catch(() => null),
-            api.get(`/claims?current_owner_id=${user.id}`).catch(() => null),
-          ]);
-          const map = new Map();
-          [...(a?.data?.data || []), ...(b?.data?.data || [])].forEach((c) =>
-            map.set(c.id, c),
-          );
-          data = Array.from(map.values());
-        }
-        // Principal / managers: owned or in their scope
-        else if (
-          [
-            "principal_claim_officer",
-            "claim_manager",
-            "gio_claim_manager",
-          ].includes(user.role)
-        ) {
-          const res = await api
-            .get(`/claims?current_owner_id=${user.id}`)
-            .catch(() => null);
-          data = res?.data?.data || [];
-          // optional: also claims they submitted
-          const sub = await api
-            .get(`/claims?submitted_by_id=${user.id}`)
-            .catch(() => null);
-          const map = new Map(data.map((c) => [c.id, c]));
-          (sub?.data?.data || []).forEach((c) => map.set(c.id, c));
-          data = Array.from(map.values());
-        }
-        // Fallback: anything linked to this user
-        else {
-          const res = await api.get(`/claims?submitted_by_id=${user.id}`);
-          data = res.data.data || [];
+        const res = await api.get(`/claims${q}`);
+        let data = res.data.data || [];
+
+        if (roleScope === "GIO_Approval") {
+          data = data.filter((c) => c.workflow_type === "GIO_Approval");
+        } else if (roleScope === "Claim_Division") {
+          data = data.filter((c) => c.workflow_type !== "GIO_Approval");
         }
 
-        // Client-side safety: role still sees only linked claims
-        if (
-          ["claim_adjuster", "gio_claim_adjuster", "surveyor"].includes(
-            user.role,
-          )
-        ) {
-          data = data.filter(
-            (c) =>
-              c.assigned_performer_id === user.id ||
-              c.current_owner_id === user.id,
-          );
-        }
+        // Keep only claims linked to this user (same rules as dashboard pending)
+        data = data.filter((c) => isAssignedToMe(c, user));
 
         if (!cancelled) setClaims(data);
       } catch {
-        // silent
+        if (!cancelled) setClaims([]);
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -121,39 +95,33 @@ export default function MyClaims() {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [user, roleScope]);
 
   const handleWorkflowChange = (value) => {
     setWorkflowFilter(value);
     setStatusFilter("all");
   };
 
-  const filtered = claims.filter((c) => {
-    const claimWorkflowType = c.workflow_type || "Claim_Division";
+  const filtered = useMemo(() => {
+    return claims.filter((c) => {
+      const claimWorkflowType = c.workflow_type || "Claim_Division";
 
-    const matchSearch =
-      !search ||
-      c.claim_reference?.toLowerCase().includes(search.toLowerCase()) ||
-      c.claimant_name?.toLowerCase().includes(search.toLowerCase());
+      const matchSearch =
+        !search ||
+        c.claim_reference?.toLowerCase().includes(search.toLowerCase()) ||
+        c.claimant_name?.toLowerCase().includes(search.toLowerCase());
 
-    const matchWorkflow =
-      effectiveWorkflowFilter === "all" ||
-      (effectiveWorkflowFilter === "GIO_Approval"
-        ? claimWorkflowType === "GIO_Approval"
-        : claimWorkflowType !== "GIO_Approval");
+      const matchWorkflow =
+        effectiveWorkflowFilter === "all" ||
+        (effectiveWorkflowFilter === "GIO_Approval"
+          ? claimWorkflowType === "GIO_Approval"
+          : claimWorkflowType !== "GIO_Approval");
 
-    const matchStatus = statusFilter === "all" || c.status === statusFilter;
+      const matchStatus = statusFilter === "all" || c.status === statusFilter;
 
-    return matchSearch && matchWorkflow && matchStatus;
-  });
-
-  const scopedTotal = claims.filter((c) => {
-    const claimWorkflowType = c.workflow_type || "Claim_Division";
-    if (isScopedAll) return true;
-    return isScopedGio
-      ? claimWorkflowType === "GIO_Approval"
-      : claimWorkflowType !== "GIO_Approval";
-  }).length;
+      return matchSearch && matchWorkflow && matchStatus;
+    });
+  }, [claims, search, effectiveWorkflowFilter, statusFilter]);
 
   if (loading) {
     return (
@@ -168,26 +136,14 @@ export default function MyClaims() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
-            {isScopedAll
-              ? "My Claims"
-              : isScopedGio
-                ? "My GIO Cases"
-                : "My Claims"}
+            {isScopedGio ? "My GIO Cases" : "My Claims"}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {scopedTotal}{" "}
-            {["claim_adjuster", "gio_claim_adjuster", "surveyor"].includes(
-              user?.role,
-            )
-              ? "claim(s) assigned to you"
-              : isScopedGio
-                ? "case(s) submitted by you"
-                : "claim(s) linked to you"}
+            {claims.length} claim(s) assigned or linked to you
           </p>
         </div>
       </div>
 
-      {/* Filters */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -242,11 +198,7 @@ export default function MyClaims() {
                 <SelectLabel>
                   {effectiveWorkflowFilter === "all" ? "GIO Case" : undefined}
                 </SelectLabel>
-                {GIO_STATUS_LIST.filter(
-                  (s) =>
-                    effectiveWorkflowFilter === "GIO_Approval" ||
-                    !CLAIM_DIVISION_STATUS_LIST.includes(s),
-                ).map((s) => (
+                {GIO_STATUS_LIST.map((s) => (
                   <SelectItem key={`gio-${s}`} value={s}>
                     {s.replace(/_/g, " ")}
                   </SelectItem>
@@ -257,7 +209,6 @@ export default function MyClaims() {
         </Select>
       </div>
 
-      {/* List */}
       {filtered.length === 0 ? (
         <Card className="border-0 shadow-sm">
           <CardContent className="flex flex-col items-center justify-center py-16">
@@ -310,6 +261,9 @@ export default function MyClaims() {
                           {claim.current_department
                             ? claim.current_department.replace(/_/g, " ")
                             : claim.originating_office || "—"}
+                          {claim.workflow_stage
+                            ? ` · ${claim.workflow_stage}`
+                            : ""}
                         </p>
                       </div>
                     </div>
@@ -322,12 +276,14 @@ export default function MyClaims() {
                           {claim.current_approver_role &&
                           claim.current_approver_role !== "None"
                             ? `At: ${claim.current_approver_role.replace(/_/g, " ")}`
-                            : ""}
+                            : claim.current_owner_name
+                              ? `Owner: ${claim.current_owner_name}`
+                              : ""}
                         </p>
                       </div>
                       <Badge
                         variant="secondary"
-                        className={`text-[10px] ${STATUS_COLORS[claim.status]}`}
+                        className={`text-[10px] ${STATUS_COLORS[claim.status] || ""}`}
                       >
                         {claim.status?.replace(/_/g, " ")}
                       </Badge>

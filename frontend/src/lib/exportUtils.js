@@ -1,15 +1,31 @@
 import jsPDF from "jspdf";
+import * as XLSX from "xlsx";
 
 /**
- * Export an array of records to CSV (Excel-compatible).
- * @param {string} filename - download file name (without extension)
- * @param {string[]} headers - column headers
- * @param {Array<Array<string|number|null|undefined>>} rows - data rows matching headers
+ * Export to Excel (.xlsx)
+ * @param {string} filename - without extension
+ * @param {string[]} headers
+ * @param {Array<Array<string|number|null|undefined>>} rows
+ * @param {string} [sheetName]
+ */
+export function exportToExcel(filename, headers, rows, sheetName = "Claims") {
+  const data = [
+    headers,
+    ...rows.map((r) => r.map((c) => (c == null ? "" : c))),
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  ws["!cols"] = headers.map((h) => ({
+    wch: Math.min(40, Math.max(12, String(h).length + 4)),
+  }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, String(sheetName).slice(0, 31));
+  XLSX.writeFile(wb, `${filename}.xlsx`);
+}
+
+/**
+ * @deprecated Prefer exportToExcel — kept if something still imports it
  */
 export function exportToCSV(filename, headers, rows) {
-  /**
-   * @param {string|number|null|undefined} val
-   */
   const escape = (val) => {
     const s = String(val ?? "");
     if (s.includes(",") || s.includes('"') || s.includes("\n")) {
@@ -25,22 +41,14 @@ export function exportToCSV(filename, headers, rows) {
   triggerDownload(blob, `${filename}.csv`);
 }
 
-/**
- * Export an array of records to a PDF with a manually drawn table.
- * @param {string} filename - download file name (without extension)
- * @param {string} title - document title
- * @param {string[]} headers - column headers
- * @param {Array<Array<string|number|null|undefined>>} rows - data rows
- * @param {number[]} [colWidths] - optional relative column widths (fractions of 1)
- */
 export function exportToPDF(filename, title, headers, rows, colWidths) {
+  // ... keep your existing exportToPDF body unchanged ...
   const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
   const margin = 40;
   const tableW = pageW - margin * 2;
 
-  // Title
   doc.setFontSize(16);
   doc.setTextColor(30, 58, 138);
   doc.text(title, margin, 40);
@@ -53,7 +61,6 @@ export function exportToPDF(filename, title, headers, rows, colWidths) {
     56,
   );
 
-  // Column widths
   const relW = colWidths || headers.map(() => 1);
   const totalRel = relW.reduce((a, b) => a + b, 0);
   const widths = relW.map((w) => (w / totalRel) * tableW);
@@ -63,7 +70,6 @@ export function exportToPDF(filename, title, headers, rows, colWidths) {
   const fontSize = 7;
   doc.setFontSize(fontSize);
 
-  // Header row
   doc.setFillColor(30, 58, 138);
   doc.rect(margin, y, tableW, rowH, "F");
   doc.setTextColor(255);
@@ -74,7 +80,6 @@ export function exportToPDF(filename, title, headers, rows, colWidths) {
   });
   y += rowH;
 
-  // Data rows
   doc.setTextColor(40);
   rows.forEach((row, ri) => {
     if (y > pageH - margin) {
@@ -97,17 +102,12 @@ export function exportToPDF(filename, title, headers, rows, colWidths) {
     y += rowH;
   });
 
-  // Borders
   doc.setDrawColor(200);
   doc.rect(margin, 72, tableW, y - 72);
 
   doc.save(`${filename}.pdf`);
 }
 
-/**
- * @param {Blob} blob
- * @param {string} filename
- */
 function triggerDownload(blob, filename) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

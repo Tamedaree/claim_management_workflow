@@ -7,6 +7,8 @@ import {
   deleteClaim,
   submitClaim,
   completeStage,
+  returnStage,
+  resubmitStage,
 } from "../controllers/claimController.js";
 import { protect } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
@@ -28,5 +30,7 @@ router
 
 router.patch("/:id/submit", submitClaim);
 router.post('/:id/complete-stage', completeStage);
+router.post("/:id/return-stage", protect, returnStage);
+router.post("/:id/resubmit-stage", protect, resubmitStage);
 
 export default router;

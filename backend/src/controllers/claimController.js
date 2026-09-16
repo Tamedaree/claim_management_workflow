@@ -1,27 +1,25 @@
 import prisma from "../config/db.js";
 import ApiError from "../utils/ApiError.js";
+import { canActOnGioStage } from "../utils/gioAccess.js";
+import { upsertGarageByName } from "./garageController.js";
 import {
   GIO_WORKFLOW_STAGES,
   GIO_CASE_REASONS,
+  GIO_APPROVAL_TIER_STAGES,
 } from "../config/gioWorkflow.js";
 
 const GIO_STAGE_STATUS = {
-  "GIO Case Registration": "Pending_GIO_Assignment",
-  "Chief of GIO Decision": "Assigned_to_GIO_Claim_Adjuster",
-  "GIO Claim Adjuster Review": "Document_Review_Pending",
+  "GIO Case Registration": "Case_Received",
+  "Director Assignment": "Director_Assignment_Pending",
+  "Manager Assignment": "Manager_Assignment_Pending",
+  "GIO Case Work": "Assigned_to_GIO_Principal",
   "GIO Claim Manager Review": "Claim_Manager_Review_Pending",
   "Director Decision": "Director_Decision_Pending",
+  "Senior Director Decision": "Senior_Director_Decision_Pending",
   "Chief of GIO Approval": "Chief_of_GIO_Approval_Pending",
   "CEO Decision": "CEO_Approval_Pending",
   "GIO Case Closure": "Closed",
 };
-
-const GIO_APPROVAL_TIER_STAGES = [
-  "GIO Claim Manager Review",
-  "Director Decision",
-  "Chief of GIO Approval",
-  "CEO Decision",
-];
 
 // @desc    Get all claims (with filters)
 // @route   GET /api/claims
@@ -41,6 +39,7 @@ export const getClaims = async (req, res, next) => {
     } = req.query;
 
     const where = {};
+    where.is_deleted = false;
 
     if (status) where.status = status;
     if (insurance_type) where.insurance_type = insurance_type;
@@ -52,9 +51,18 @@ export const getClaims = async (req, res, next) => {
     if (req.query.gio_case_reason) {
       where.gio_case_reason = req.query.gio_case_reason;
     }
+    if (req.query.include_deleted === "true" && req.user?.role === "admin") {
+      delete where.is_deleted;
+    }
     if (req.query.claim_reference) {
       where.claim_reference = {
         equals: req.query.claim_reference,
+        mode: "insensitive",
+      };
+    }
+    if (req.query.claim_number) {
+      where.claim_number = {
+        equals: String(req.query.claim_number).trim(),
         mode: "insensitive",
       };
     }
@@ -109,7 +117,7 @@ export const getClaim = async (req, res, next) => {
       },
     });
 
-    if (!claim) {
+    if (claim.is_deleted && req.user?.role !== "admin") {
       throw new ApiError(404, "Claim not found");
     }
 
@@ -151,6 +159,15 @@ export const createClaim = async (req, res, next) => {
       is_subrogation,
       is_recovery,
       is_reinsurance,
+      claim_number,
+      final_approval_amount,
+      motor_vehicle_type,
+      is_rebid,
+      rebid_participating_garages,
+      rebid_winner_garage,
+      garage_name,
+      has_independent_assessor,
+      independent_assessor_name,
       assigned_performer_id,
       assigned_performer_name,
       due_date,
@@ -226,6 +243,15 @@ export const createClaim = async (req, res, next) => {
       status = auto_submit ? "Notification_Received" : "Draft";
     }
 
+    const garageName =
+      garage_name != null && String(garage_name).trim()
+        ? String(garage_name).trim()
+        : null;
+
+    if (garageName) {
+      await upsertGarageByName(garageName);
+    }
+
     const claim = await prisma.$transaction(async (tx) => {
       const created = await tx.claim.create({
         data: {
@@ -253,6 +279,22 @@ export const createClaim = async (req, res, next) => {
           is_subrogation: !!is_subrogation,
           is_recovery: !!is_recovery,
           is_reinsurance: !!is_reinsurance,
+          claim_number: claim_number || null,
+          final_approval_amount:
+            final_approval_amount != null && final_approval_amount !== ""
+              ? Number(final_approval_amount)
+              : null,
+          motor_vehicle_type: motor_vehicle_type || null,
+          is_rebid: !!is_rebid,
+          rebid_participating_garages: Array.isArray(
+            rebid_participating_garages,
+          )
+            ? rebid_participating_garages
+            : [],
+          rebid_winner_garage: rebid_winner_garage || null,
+          garage_name: garageName,
+          has_independent_assessor: !!has_independent_assessor,
+          independent_assessor_name: independent_assessor_name || null,
           assigned_performer_id: assigned_performer_id || null,
           assigned_performer_name: assigned_performer_name || null,
           assignment_date: assigned_performer_id ? now : null,
@@ -401,6 +443,9 @@ export const updateClaim = async (req, res, next) => {
     if (!claim) {
       throw new ApiError(404, "Claim not found");
     }
+    if (claim.is_deleted) {
+      throw new ApiError(400, "Cannot update a deleted claim");
+    }
 
     const body = { ...req.body };
     delete body.id;
@@ -445,6 +490,35 @@ export const updateClaim = async (req, res, next) => {
       body.return_count = Number(body.return_count);
     }
 
+    if (
+      body.final_approval_amount !== undefined &&
+      body.final_approval_amount !== null &&
+      body.final_approval_amount !== ""
+    ) {
+      body.final_approval_amount = Number(body.final_approval_amount);
+    } else if (body.final_approval_amount === "") {
+      body.final_approval_amount = null;
+    }
+
+    if (body.gio_case_reason !== undefined) {
+      if (
+        claim.workflow_type === "GIO_Approval" &&
+        body.gio_case_reason &&
+        !GIO_CASE_REASONS.includes(body.gio_case_reason)
+      ) {
+        throw new ApiError(400, "Invalid gio_case_reason");
+      }
+      if (body.gio_case_reason === "") {
+        body.gio_case_reason = null;
+      }
+    }
+
+    // Optional: do not allow flipping workflow_type on edit
+    delete body.workflow_type;
+    delete body.is_deleted;
+    delete body.deleted_at;
+    delete body.deleted_by_id;
+
     // Claim Adjuster completes full registration (Claim Division)
     if (body.registration_complete === true && !claim.registration_complete) {
       const amount =
@@ -480,6 +554,17 @@ export const updateClaim = async (req, res, next) => {
       }
     }
 
+    if (body.garage_name !== undefined) {
+      const n =
+        body.garage_name != null && String(body.garage_name).trim()
+          ? String(body.garage_name).trim()
+          : null;
+      body.garage_name = n;
+      if (n) {
+        await upsertGarageByName(n);
+      }
+    }
+
     const updatedClaim = await prisma.claim.update({
       where: { id: req.params.id },
       data: body,
@@ -502,17 +587,24 @@ export const deleteClaim = async (req, res, next) => {
       where: { id: req.params.id },
     });
 
-    if (!claim) {
-      throw new ApiError(404, "Claim not found");
+    if (!claim) throw new ApiError(404, "Claim not found");
+    if (claim.is_deleted) {
+      throw new ApiError(400, "Claim already deleted");
     }
 
-    await prisma.claim.delete({
+    const updated = await prisma.claim.update({
       where: { id: req.params.id },
+      data: {
+        is_deleted: true,
+        deleted_at: new Date(),
+        deleted_by_id: req.user?.id || null,
+      },
     });
 
     res.json({
       success: true,
-      message: "Claim deleted successfully",
+      message: "Claim removed from lists (soft delete)",
+      data: updated,
     });
   } catch (error) {
     next(error);
@@ -595,11 +687,25 @@ export const completeStage = async (req, res, next) => {
     const current = claim.activities.find((a) => a.status === "In_Progress");
     if (!current) throw new ApiError(400, "No in-progress stage found");
 
+    if (!canActOnGioStage(req.user.role, current.responsible_role)) {
+      throw new ApiError(403, "Not allowed to act on this GIO stage");
+    }
+
     // Chief of GIO Decision → must assign a GIO Claim Adjuster
-    if (current.stage_name === "Chief of GIO Decision" && !assign_user_id) {
+    const ASSIGN_MANAGER_STAGE = "Director Assignment";
+    const ASSIGN_PRINCIPAL_STAGE = "Manager Assignment";
+
+    if (current.stage_name === ASSIGN_MANAGER_STAGE && !assign_user_id) {
       throw new ApiError(
         400,
-        "assign_user_id is required: select a GIO Claim Adjuster",
+        "assign_user_id is required: select a GIO Claim Manager",
+      );
+    }
+
+    if (current.stage_name === ASSIGN_PRINCIPAL_STAGE && !assign_user_id) {
+      throw new ApiError(
+        400,
+        "assign_user_id is required: select a GIO Claim Principal",
       );
     }
 
@@ -745,7 +851,7 @@ export const completeStage = async (req, res, next) => {
             claim_reference: claim.claim_reference,
             title: `GIO case assigned: ${claim.claim_reference}`,
             message: `"${next.stage_name}" is assigned to you.${
-              assign_user_name ? " Assigned by Chief of GIO." : ""
+              assign_user_name ? ` Assigned by ${actorName}.` : ""
             } Previous stage took ${daysTaken} day(s).`,
             type: "approval_required",
           },
@@ -782,6 +888,277 @@ export const completeStage = async (req, res, next) => {
       days_taken: daysTaken,
       data: result,
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const returnStage = async (req, res, next) => {
+  try {
+    const { comments, target_stage_order, target_stage_name } = req.body;
+
+    if (!comments?.trim()) {
+      throw new ApiError(
+        400,
+        "Comments are required when returning for correction",
+      );
+    }
+
+    const claim = await prisma.claim.findUnique({
+      where: { id: req.params.id },
+      include: { activities: { orderBy: { stage_order: "asc" } } },
+    });
+
+    if (!claim) throw new ApiError(404, "Claim not found");
+    if (claim.workflow_type !== "GIO_Approval") {
+      throw new ApiError(400, "GIO cases only");
+    }
+
+    const current = claim.activities.find((a) => a.status === "In_Progress");
+    if (!current) throw new ApiError(400, "No in-progress stage");
+
+    if (!canActOnGioStage(req.user.role, current.responsible_role)) {
+      throw new ApiError(403, "Not allowed to act on this GIO stage");
+    }
+
+    let targetOrder =
+      target_stage_order != null && target_stage_order !== ""
+        ? Number(target_stage_order)
+        : NaN;
+
+    if (!Number.isFinite(targetOrder) && target_stage_name) {
+      const byName = claim.activities.find(
+        (a) => a.stage_name === target_stage_name,
+      );
+      if (byName) targetOrder = byName.stage_order;
+    }
+
+    if (!Number.isFinite(targetOrder)) {
+      throw new ApiError(400, "target_stage_order is required");
+    }
+
+    if (targetOrder >= current.stage_order) {
+      throw new ApiError(
+        400,
+        "Return target must be an earlier stage than the current one",
+      );
+    }
+
+    const target = claim.activities.find((a) => a.stage_order === targetOrder);
+    if (!target) throw new ApiError(400, "Target stage not found");
+
+    const now = new Date();
+    const actorName =
+      req.user.full_name ||
+      [req.user.first_name, req.user.last_name].filter(Boolean).join(" ") ||
+      req.user.email;
+
+    // Owner = target stage role (NOT always secretary)
+    let ownerId = target.responsible_user_id || null;
+    let ownerName = target.responsible_user_name || null;
+
+    if (!ownerId && target.responsible_role) {
+      const users = await prisma.user.findMany({
+        where: { role: target.responsible_role, is_active: true },
+        take: 1,
+      });
+      if (users[0]) {
+        ownerId = users[0].id;
+        ownerName = users[0].email;
+      }
+    }
+
+    // Only registration-style first stage goes back to submitter
+    const isRegistrationTarget =
+      target.stage_order === 1 || /registration/i.test(target.stage_name || "");
+
+    if (isRegistrationTarget) {
+      ownerId = claim.submitted_by_id || ownerId;
+      ownerName = claim.submitted_by_name || ownerName;
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const inRange = claim.activities.filter(
+        (a) =>
+          a.stage_order >= target.stage_order &&
+          a.stage_order <= current.stage_order,
+      );
+
+      for (const a of inRange) {
+        const isTarget = a.stage_order === target.stage_order;
+
+        await tx.claimActivity.update({
+          where: { id: a.id },
+          data: isTarget
+            ? {
+                status: "In_Progress",
+                started_at: now,
+                completed_at: null,
+                comments: `Returned for correction: ${comments}`,
+              }
+            : {
+                status: "Pending",
+                started_at: null,
+                completed_at: null,
+                comments: null,
+                responsible_user_id: null,
+                responsible_user_name: null,
+              },
+        });
+      }
+
+      await tx.claimAction.create({
+        data: {
+          claim_id: claim.id,
+          action_type: "Returned",
+          action_by_id: req.user.id,
+          action_by_name: actorName,
+          action_by_role: req.user.role,
+          comments: `Returned from "${current.stage_name}" to "${target.stage_name}": ${comments}`,
+        },
+      });
+
+      const updated = await tx.claim.update({
+        where: { id: claim.id },
+        data: {
+          status: "Returned_for_Correction", // must match Prisma enum
+          return_count: (claim.return_count || 0) + 1,
+          remarks: comments,
+          workflow_stage: target.stage_name,
+          workflow_stage_order: target.stage_order,
+          current_owner_id: ownerId,
+          current_owner_name: ownerName,
+          current_approver_role: "None",
+        },
+        include: {
+          activities: { orderBy: { stage_order: "asc" } },
+          actions: { orderBy: { createdAt: "desc" } },
+        },
+      });
+
+      if (ownerId) {
+        await tx.notification.create({
+          data: {
+            user_id: ownerId,
+            claim_id: claim.id,
+            claim_reference: claim.claim_reference,
+            title: `Correction needed: ${claim.claim_reference}`,
+            message: `Returned to "${target.stage_name}": ${comments}`,
+            type: "claim_returned",
+          },
+        });
+      }
+
+      return updated;
+    });
+
+    res.json({ success: true, data: result });
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const resubmitStage = async (req, res, next) => {
+  try {
+    const { comments } = req.body;
+
+    const claim = await prisma.claim.findUnique({
+      where: { id: req.params.id },
+      include: { activities: { orderBy: { stage_order: "asc" } } },
+    });
+
+    if (!claim) throw new ApiError(404, "Claim not found");
+
+    const returnedOk = [
+      "Returned_for_Correction",
+      "Returned_to_Originating_Office",
+      "Returned",
+    ].includes(claim.status);
+
+    if (!returnedOk) {
+      throw new ApiError(400, "Only returned cases can be resubmitted");
+    }
+
+    // Never default to activities[0]
+    const stage =
+      claim.activities.find((a) => a.status === "In_Progress") ||
+      claim.activities.find((a) => a.status === "On_Hold") ||
+      claim.activities.find((a) => a.stage_name === claim.workflow_stage);
+
+    if (!stage) throw new ApiError(400, "No stage to resume");
+
+    const now = new Date();
+    const actorName = req.user.full_name || req.user.email;
+
+    let ownerId = stage.responsible_user_id;
+    let ownerName = stage.responsible_user_name;
+
+    if (!ownerId && stage.responsible_role) {
+      const users = await prisma.user.findMany({
+        where: { role: stage.responsible_role, is_active: true },
+        take: 1,
+      });
+      if (users[0]) {
+        ownerId = users[0].id;
+        ownerName = users[0].email;
+      }
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      await tx.claimActivity.update({
+        where: { id: stage.id },
+        data: {
+          status: "In_Progress",
+          started_at: stage.started_at || now,
+          completed_at: null,
+          comments: comments ? `Resubmitted: ${comments}` : stage.comments,
+        },
+      });
+
+      await tx.claimAction.create({
+        data: {
+          claim_id: claim.id,
+          action_type: "Resubmitted",
+          action_by_id: req.user.id,
+          action_by_name: actorName,
+          action_by_role: req.user.role,
+          comments: comments || "Corrected information resubmitted",
+        },
+      });
+
+      const updated = await tx.claim.update({
+        where: { id: claim.id },
+        data: {
+          status:
+            GIO_STAGE_STATUS[stage.stage_name] || "GIO_Review_In_Progress",
+          workflow_stage: stage.stage_name,
+          workflow_stage_order: stage.stage_order,
+          current_owner_id: ownerId,
+          current_owner_name: ownerName,
+        },
+        include: {
+          activities: { orderBy: { stage_order: "asc" } },
+          actions: { orderBy: { createdAt: "desc" } },
+        },
+      });
+
+      if (ownerId) {
+        await tx.notification.create({
+          data: {
+            user_id: ownerId,
+            claim_id: claim.id,
+            claim_reference: claim.claim_reference,
+            title: `Resubmitted: ${claim.claim_reference}`,
+            message: `Continue at "${stage.stage_name}".`,
+            type: "approval_required",
+          },
+        });
+      }
+
+      return updated;
+    });
+
+    res.json({ success: true, data: result });
   } catch (error) {
     next(error);
   }

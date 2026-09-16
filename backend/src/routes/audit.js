@@ -5,6 +5,7 @@ import {
   getAccessLogs,
 } from "../controllers/auditController.js";
 import { protect } from "../middleware/auth.js";
+import { requireAuditAccess } from "../middleware/requireAuditAccess.js";
 
 const router = express.Router();
 

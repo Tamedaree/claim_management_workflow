@@ -14,6 +14,11 @@ import {
   Check,
   Trash2,
   ArrowRight,
+  AlertTriangle,
+  Shield,
+  Activity,
+  Database,
+  KeyRound,
 } from "lucide-react";
 import moment from "moment";
 
@@ -25,6 +30,11 @@ const TYPE_ICONS = {
   claim_escalated: Info,
   info_requested: Info,
   general: Bell,
+  account_locked: AlertTriangle,
+  password_changed: KeyRound,
+  security_alert: Shield,
+  system_health: Activity,
+  backup_failed: Database,
 };
 
 const TYPE_COLORS = {
@@ -35,6 +45,11 @@ const TYPE_COLORS = {
   claim_escalated: "bg-purple-50 text-purple-600",
   info_requested: "bg-cyan-50 text-cyan-600",
   general: "bg-blue-50 text-blue-600",
+  account_locked: "bg-red-50 text-red-600",
+  password_changed: "bg-amber-50 text-amber-700",
+  security_alert: "bg-red-50 text-red-700",
+  system_health: "bg-orange-50 text-orange-700",
+  backup_failed: "bg-rose-50 text-rose-700",
 };
 
 const isStageNotification = (n) =>
@@ -143,6 +158,13 @@ export default function Notifications() {
     );
   }
 
+  const isAdmin = user?.role === "admin";
+
+  // empty state text
+  {
+    isAdmin ? "No system or security alerts" : "No notifications yet";
+  }
+
   const unreadCount = notifications.filter((n) => !n.is_read).length;
   const hasCompletedStage = notifications.some(
     (n) => isStageNotification(n) && n.is_read,
@@ -158,7 +180,7 @@ export default function Notifications() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {hasCompletedStage && (
+          {!isAdmin && hasCompletedStage && (
             <Button
               variant="outline"
               size="sm"

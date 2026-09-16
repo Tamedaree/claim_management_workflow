@@ -40,6 +40,13 @@ import {
   ArrowUpDown,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  Gauge,
+  MapPin,
+  Layers,
+  Link2,
+  ShieldCheck,
+  Inbox,
 } from "lucide-react";
 import moment from "moment";
 import { jsPDF } from "jspdf";
@@ -49,6 +56,7 @@ import { saveAs } from "file-saver";
 import {
   ROLE_LABELS,
   STATUS_COLORS,
+  ROLE_HIERARCHY,
   getWorkflowScopeForRole,
 } from "@/lib/roleConfig";
 
@@ -62,7 +70,20 @@ const CLOSED_STATUSES = new Set([
   "Rejected",
 ]);
 
-const DELAY_DAYS_THRESHOLD = 7; // change or load from config later
+const DELAY_DAYS_THRESHOLD = 7;
+
+const REPORT_TYPES = [
+  { value: "tracking", label: "Claim Status / Tracking", icon: FileText },
+  { value: "tat", label: "Turnaround Time (TAT)", icon: Clock },
+  { value: "bottleneck", label: "Bottleneck / Delay (Aging)", icon: Gauge },
+  { value: "district", label: "District / Branch Summary", icon: MapPin },
+  { value: "class", label: "Class-of-Business Summary", icon: Layers },
+  { value: "decision", label: "Decision Outcome", icon: CheckCircle2 },
+  { value: "payment", label: "Payment / Disbursement", icon: FileDown },
+  { value: "recovery", label: "Subrogation / Recovery-Linked", icon: Link2 },
+  { value: "doa", label: "Approval / DoA Compliance", icon: ShieldCheck },
+  { value: "pending", label: "Pending Claims", icon: Inbox },
+];
 
 function getClaimDate(c) {
   return c.createdAt || c.created_date || c.submission_date || c.date_received;
@@ -79,7 +100,6 @@ function isActive(c) {
   return true;
 }
 
-/** Best-effort: when claim entered current stage */
 function stageEnteredAt(c) {
   return (
     c.stage_entered_at ||
@@ -89,7 +109,6 @@ function stageEnteredAt(c) {
     getClaimDate(c)
   );
 }
-
 function daysInCurrentStage(c) {
   const start = stageEnteredAt(c);
   if (!start) return 0;
@@ -118,7 +137,7 @@ function periodStart(period) {
     case "year":
       return now.clone().startOf("year");
     default:
-      return null; // all
+      return null;
   }
 }
 
@@ -146,7 +165,7 @@ function trendKey(date, granularity) {
   if (granularity === "daily") return m.format("DD MMM");
   if (granularity === "weekly") return `W${m.isoWeek()} ${m.format("YY")}`;
   if (granularity === "yearly") return m.format("YYYY");
-  return m.format("MMM YY"); // monthly
+  return m.format("MMM YY");
 }
 
 function displayPerson(value, nameByEmail = {}) {
@@ -161,6 +180,8 @@ export default function Reports() {
   const role = user?.role || "claim_adjuster";
   const scope = getWorkflowScopeForRole(role);
   const [claims, setClaims] = useState([]);
+  const [activities, setActivities] = useState([]);
+  const [thresholds, setThresholds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState("30d");
   const [trendGranularity, setTrendGranularity] = useState("monthly");
@@ -168,14 +189,23 @@ export default function Reports() {
   const [sortDir, setSortDir] = useState("desc");
   const [nameByEmail, setNameByEmail] = useState({});
   const [page, setPage] = useState(1);
+  const [reportType, setReportType] = useState("tracking");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
-        const res = await api.get("/claims");
-        if (!cancelled) setClaims(res.data?.data || []);
+        const [claimsRes, activitiesRes, thresholdsRes] = await Promise.all([
+          api.get("/claims"),
+          api.get("/claim-activities").catch(() => ({ data: { data: [] } })),
+          api.get("/approval-thresholds").catch(() => ({ data: { data: [] } })),
+        ]);
+        if (!cancelled) {
+          setClaims(claimsRes.data?.data || []);
+          setActivities(activitiesRes.data?.data || []);
+          setThresholds(thresholdsRes.data?.data || []);
+        }
       } catch {
         if (!cancelled) setClaims([]);
       } finally {
@@ -205,9 +235,7 @@ export default function Reports() {
   }, []);
 
   const canSwitch = scope === "all";
-
   const [streamChoice, setStreamChoice] = useState("Claim_Division");
-
   const stream = canSwitch ? streamChoice : scope;
 
   const streamClaims = useMemo(() => {
@@ -222,6 +250,15 @@ export default function Reports() {
     [streamClaims, period],
   );
 
+  const streamClaimIds = useMemo(
+    () => new Set(filtered.map((c) => c.id)),
+    [filtered],
+  );
+  const streamActivities = useMemo(
+    () => activities.filter((a) => streamClaimIds.has(a.claim_id)),
+    [activities, streamClaimIds],
+  );
+
   const totalClaims = filtered.length;
   const activeClaims = filtered.filter(isActive);
   const closedClaims = filtered.filter(isClosed);
@@ -230,9 +267,7 @@ export default function Reports() {
   const pendingDelayedRows = useMemo(() => {
     const rows = activeClaims.map((c) => {
       const days = daysInCurrentStage(c);
-
       const ownerName = displayPerson(c.current_owner_name, nameByEmail);
-
       const roleLabel =
         c.current_approver_role && c.current_approver_role !== "None"
           ? ROLE_LABELS[c.current_approver_role] ||
@@ -254,7 +289,6 @@ export default function Reports() {
 
     rows.sort((a, b) => {
       const dir = sortDir === "asc" ? 1 : -1;
-
       if (sortKey === "claim") {
         return (
           dir *
@@ -263,13 +297,11 @@ export default function Reports() {
           )
         );
       }
-
       if (sortKey === "status") {
         return (
           dir * String(a.status || "").localeCompare(String(b.status || ""))
         );
       }
-
       return dir * ((a.days || 0) - (b.days || 0));
     });
 
@@ -290,16 +322,6 @@ export default function Reports() {
     return Object.values(map).sort((a, b) => a.sort - b.sort);
   }, [filtered, trendGranularity]);
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(pendingDelayedRows.length / PAGE_SIZE),
-  );
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const startIdx = (safePage - 1) * PAGE_SIZE;
-  const pageRows = pendingDelayedRows.slice(startIdx, startIdx + PAGE_SIZE);
-  const showingFrom = pendingDelayedRows.length === 0 ? 0 : startIdx + 1;
-  const showingTo = Math.min(startIdx + PAGE_SIZE, pendingDelayedRows.length);
-
   const sourceData = useMemo(() => {
     const buckets = {
       "Service Center": 0,
@@ -317,6 +339,212 @@ export default function Reports() {
       .filter((d) => d.count > 0);
   }, [filtered]);
 
+  // ---- TAT Report: average days per stage, and per performer ----
+  const tatByStage = useMemo(() => {
+    const map = {};
+    streamActivities.forEach((a) => {
+      if (!a.started_at || !a.completed_at) return;
+      const stageName = a.stage_name || "Unknown";
+      const days = moment(a.completed_at).diff(
+        moment(a.started_at),
+        "days",
+        true,
+      );
+      if (!map[stageName])
+        map[stageName] = { stage: stageName, totalDays: 0, count: 0 };
+      map[stageName].totalDays += days;
+      map[stageName].count += 1;
+    });
+    return Object.values(map)
+      .map((s) => ({
+        stage: s.stage,
+        avgDays: Math.round((s.totalDays / s.count) * 10) / 10,
+        completedCount: s.count,
+      }))
+      .sort((a, b) => b.avgDays - a.avgDays);
+  }, [streamActivities]);
+
+  const tatByPerformer = useMemo(() => {
+    const map = {};
+    streamActivities.forEach((a) => {
+      if (!a.started_at || !a.completed_at) return;
+      const person =
+        displayPerson(a.responsible_user_name, nameByEmail) ||
+        a.responsible_user_name ||
+        "Unassigned";
+      const days = moment(a.completed_at).diff(
+        moment(a.started_at),
+        "days",
+        true,
+      );
+      if (!map[person])
+        map[person] = { performer: person, totalDays: 0, count: 0 };
+      map[person].totalDays += days;
+      map[person].count += 1;
+    });
+    return Object.values(map)
+      .map((p) => ({
+        performer: p.performer,
+        avgDays: Math.round((p.totalDays / p.count) * 10) / 10,
+        stagesCompleted: p.count,
+      }))
+      .sort((a, b) => b.avgDays - a.avgDays);
+  }, [streamActivities, nameByEmail]);
+
+  // ---- Bottleneck / Aging: currently-open stages exceeding SLA ----
+  const bottleneckRows = useMemo(() => {
+    return streamActivities
+      .filter((a) => a.status === "In_Progress" && a.started_at)
+      .map((a) => {
+        const days = moment().diff(moment(a.started_at), "days");
+        const claim = filtered.find((c) => c.id === a.claim_id);
+        return {
+          id: a.id,
+          claim_reference: claim?.claim_reference || a.claim_reference || "—",
+          stage: a.stage_name,
+          performer:
+            displayPerson(a.responsible_user_name, nameByEmail) ||
+            a.responsible_user_name ||
+            "—",
+          department: a.department || "—",
+          days,
+          exceeded: days > DELAY_DAYS_THRESHOLD,
+        };
+      })
+      .filter((r) => r.exceeded)
+      .sort((a, b) => b.days - a.days);
+  }, [streamActivities, filtered, nameByEmail]);
+
+  // ---- District / Branch Summary ----
+  const districtSummary = useMemo(() => {
+    const map = {};
+    filtered.forEach((c) => {
+      const office = c.originating_office || "Unspecified";
+      if (!map[office]) map[office] = { office, count: 0, totalDays: 0 };
+      map[office].count += 1;
+      map[office].totalDays += daysInCurrentStage(c);
+    });
+    return Object.values(map)
+      .map((o) => ({
+        office: o.office,
+        volume: o.count,
+        avgTAT: Math.round((o.totalDays / o.count) * 10) / 10,
+      }))
+      .sort((a, b) => b.volume - a.volume);
+  }, [filtered]);
+
+  // ---- Class of Business Summary ----
+  const classSummary = useMemo(() => {
+    const map = {};
+    filtered.forEach((c) => {
+      const type = c.insurance_type || "Other";
+      if (!map[type]) map[type] = { type, count: 0, closed: 0, amount: 0 };
+      map[type].count += 1;
+      if (isClosed(c)) map[type].closed += 1;
+      map[type].amount += c.claim_amount || 0;
+    });
+    return Object.values(map).sort((a, b) => b.count - a.count);
+  }, [filtered]);
+
+  // ---- Decision Outcome (needs registration_data.decision_type from StageRegistrationForm) ----
+  const decisionRows = useMemo(() => {
+    return filtered
+      .filter((c) => c.registration_data?.decision_type)
+      .map((c) => ({
+        claim_reference: c.claim_reference,
+        decision: c.registration_data.decision_type,
+        amount: c.claim_amount,
+      }));
+  }, [filtered]);
+  const decisionSummary = useMemo(() => {
+    const map = {};
+    decisionRows.forEach((r) => {
+      map[r.decision] = (map[r.decision] || 0) + 1;
+    });
+    return Object.entries(map).map(([name, count]) => ({ name, count }));
+  }, [decisionRows]);
+
+  // ---- Payment / Disbursement (needs registration_data.final_payment_amount) ----
+  const paymentRows = useMemo(() => {
+    return filtered
+      .filter(
+        (c) =>
+          c.registration_data?.final_payment_amount ||
+          c.registration_data?.payee,
+      )
+      .map((c) => ({
+        claim_reference: c.claim_reference,
+        payee: c.registration_data?.payee || "—",
+        amount: c.registration_data?.final_payment_amount || 0,
+        date: c.registration_data?.payment_date,
+      }));
+  }, [filtered]);
+
+  // ---- Subrogation / Recovery-Linked ----
+  const recoveryRows = useMemo(() => {
+    return filtered
+      .filter((c) => c.is_subrogation || c.is_recovery || c.is_reinsurance)
+      .map((c) => ({
+        claim_reference: c.claim_reference,
+        insured: c.claimant_name,
+        type: [
+          c.is_subrogation && "Subrogation",
+          c.is_recovery && "Recovery",
+          c.is_reinsurance && "Reinsurance",
+        ]
+          .filter(Boolean)
+          .join(", "),
+        status: c.status,
+      }));
+  }, [filtered]);
+
+  // ---- Approval / DoA Compliance ----
+  const doaRows = useMemo(() => {
+    return filtered
+      .filter(
+        (c) => c.current_approver_role && c.current_approver_role !== "None",
+      )
+      .map((c) => {
+        const match = thresholds.find(
+          (t) =>
+            (t.insurance_type === c.insurance_type ||
+              t.insurance_type === "All") &&
+            c.claim_amount >= t.min_amount &&
+            c.claim_amount <= t.max_amount,
+        );
+        if (!match) return null;
+
+        const requiredRole = String(
+          match.required_approver_role || "",
+        ).toLowerCase();
+        const actualRole = String(c.current_approver_role || "").toLowerCase();
+        const requiredIdx = ROLE_HIERARCHY.indexOf(requiredRole);
+        const actualIdx = ROLE_HIERARCHY.indexOf(actualRole);
+        const compliant =
+          requiredIdx === -1 || actualIdx === -1 || actualIdx >= requiredIdx;
+
+        return {
+          claim_reference: c.claim_reference,
+          amount: c.claim_amount,
+          requiredRole: match.required_approver_role,
+          actualRole: c.current_approver_role,
+          compliant,
+        };
+      })
+      .filter(Boolean);
+  }, [filtered, thresholds]);
+  const doaViolations = doaRows.filter((r) => !r.compliant);
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(pendingDelayedRows.length / PAGE_SIZE),
+  );
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIdx = (safePage - 1) * PAGE_SIZE;
+  const pageRows = pendingDelayedRows.slice(startIdx, startIdx + PAGE_SIZE);
+  const showingFrom = pendingDelayedRows.length === 0 ? 0 : startIdx + 1;
+  const showingTo = Math.min(startIdx + PAGE_SIZE, pendingDelayedRows.length);
+
   const toggleSort = (key) => {
     if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
     else {
@@ -333,6 +561,121 @@ export default function Reports() {
         ? "Claim Division"
         : "All Streams";
 
+  const currentReportLabel =
+    REPORT_TYPES.find((r) => r.value === reportType)?.label || "Report";
+
+  // ---- Generic export: builds a table from whatever report is active ----
+  function getExportTable() {
+    switch (reportType) {
+      case "tat":
+        return {
+          headers: ["Stage", "Avg Days", "Completed Count"],
+          rows: tatByStage.map((s) => [s.stage, s.avgDays, s.completedCount]),
+        };
+      case "bottleneck":
+        return {
+          headers: [
+            "Claim Ref",
+            "Stage",
+            "Performer",
+            "Department",
+            "Days Open",
+          ],
+          rows: bottleneckRows.map((r) => [
+            r.claim_reference,
+            r.stage,
+            r.performer,
+            r.department,
+            r.days,
+          ]),
+        };
+      case "district":
+        return {
+          headers: ["Office", "Volume", "Avg TAT (days)"],
+          rows: districtSummary.map((d) => [d.office, d.volume, d.avgTAT]),
+        };
+      case "class":
+        return {
+          headers: [
+            "Class of Business",
+            "Volume",
+            "Closed",
+            "Total Amount (ETB)",
+          ],
+          rows: classSummary.map((c) => [c.type, c.count, c.closed, c.amount]),
+        };
+      case "decision":
+        return {
+          headers: ["Claim Ref", "Decision", "Amount (ETB)"],
+          rows: decisionRows.map((r) => [
+            r.claim_reference,
+            r.decision,
+            r.amount,
+          ]),
+        };
+      case "payment":
+        return {
+          headers: ["Claim Ref", "Payee", "Amount (ETB)", "Payment Date"],
+          rows: paymentRows.map((r) => [
+            r.claim_reference,
+            r.payee,
+            r.amount,
+            r.date ? moment(r.date).format("YYYY-MM-DD") : "—",
+          ]),
+        };
+      case "recovery":
+        return {
+          headers: ["Claim Ref", "Insured", "Type", "Status"],
+          rows: recoveryRows.map((r) => [
+            r.claim_reference,
+            r.insured,
+            r.type,
+            r.status,
+          ]),
+        };
+      case "doa":
+        return {
+          headers: [
+            "Claim Ref",
+            "Amount (ETB)",
+            "Required Role",
+            "Actual Role",
+            "Compliant",
+          ],
+          rows: doaRows.map((r) => [
+            r.claim_reference,
+            r.amount,
+            String(r.requiredRole).replace(/_/g, " "),
+            String(r.actualRole).replace(/_/g, " "),
+            r.compliant ? "Yes" : "NO — VIOLATION",
+          ]),
+        };
+      case "pending":
+      case "tracking":
+      default:
+        return {
+          headers: [
+            "Reference",
+            "Insured",
+            "Status",
+            "Stage",
+            "Responsible",
+            "Days",
+            "Health",
+          ],
+          rows: pendingDelayedRows.map((r) => [
+            r.claim_reference || "N/A",
+            r.insured || "—",
+            String(r.status || "").replace(/_/g, " "),
+            r.stage || "—",
+            r.responsible || "—",
+            `${r.days}d`,
+            r.delayed ? "DELAYED" : "ON TRACK",
+          ]),
+        };
+    }
+  }
+
   const exportPDF = () => {
     const doc = new jsPDF({
       orientation: "portrait",
@@ -342,37 +685,30 @@ export default function Reports() {
     const timestamp = moment().format("DD MMM YYYY, HH:mm");
     const fileNameDate = moment().format("YYYYMMDD_HHmm");
 
-    // Colors based on EIC Corporate Palette
-    const PRIMARY_COLOR = [37, 99, 235]; // #2563eb
-    const TEXT_DARK = [30, 41, 59]; // #1e293b
-    const LIGHT_GRAY = [241, 245, 249]; // #f1f5f9
-    const RED_COLOR = [220, 38, 38]; // #dc2626
+    const PRIMARY_COLOR = [37, 99, 235];
+    const TEXT_DARK = [30, 41, 59];
+    const LIGHT_GRAY = [241, 245, 249];
+    const RED_COLOR = [220, 38, 38];
 
-    // Header Banner Background
     doc.setFillColor(...PRIMARY_COLOR);
     doc.rect(0, 0, 210, 24, "F");
-
-    // Header Title Text
     doc.setTextColor(255, 255, 255);
     doc.setFont("helvetica", "bold");
     doc.setFontSize(14);
     doc.text("ETHIOPIAN INSURANCE CORPORATION", 14, 11);
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
-    doc.text("Workflow Analytics & Status Report", 14, 18);
+    doc.text(currentReportLabel, 14, 18);
 
-    // Metadata Sub-bar
     doc.setTextColor(...TEXT_DARK);
     doc.setFontSize(9);
     doc.text(`Stream: ${streamLabel}`, 14, 30);
     doc.text(`Filter Period: ${period}`, 85, 30);
     doc.text(`Generated: ${timestamp}`, 145, 30);
-
     doc.setDrawColor(226, 232, 240);
     doc.setLineWidth(0.5);
     doc.line(14, 33, 196, 33);
 
-    // Summary Metrics Section (KPI Cards Visual Representation)
     doc.setFontSize(11);
     doc.setFont("helvetica", "bold");
     doc.text("Executive Summary KPIs", 14, 42);
@@ -385,96 +721,43 @@ export default function Reports() {
       { label: "Delayed", val: delayedClaims.length, color: RED_COLOR },
       { label: "Closed", val: closedClaims.length, color: [5, 150, 105] },
     ];
-
     kpis.forEach((kpi, idx) => {
       const x = 14 + idx * 46;
       const y = 46;
-
-      // Card background
       doc.setFillColor(...LIGHT_GRAY);
       doc.roundedRect(x, y, cardWidth, cardHeight, 2, 2, "F");
-
-      // Left accent strip
       doc.setFillColor(...kpi.color);
       doc.roundedRect(x, y, 2.5, cardHeight, 1, 1, "F");
-
-      // Label & Value
       doc.setTextColor(100, 116, 139);
       doc.setFontSize(7.5);
       doc.setFont("helvetica", "normal");
       doc.text(kpi.label.toUpperCase(), x + 5, y + 5.5);
-
       doc.setTextColor(...TEXT_DARK);
       doc.setFontSize(13);
       doc.setFont("helvetica", "bold");
       doc.text(String(kpi.val), x + 5, y + 13);
     });
 
-    // Table Data Preparation
-    const tableHeaders = [
-      [
-        "Reference",
-        "Insured Name",
-        "Status",
-        "Current Stage",
-        "Responsible",
-        "Days",
-        "Health",
-      ],
-    ];
+    const { headers, rows } = getExportTable();
 
-    const tableBody = pendingDelayedRows.map((r) => [
-      r.claim_reference || "N/A",
-      r.insured || "—",
-      String(r.status || "").replace(/_/g, " "),
-      r.stage || "—",
-      r.responsible || "—",
-      `${r.days}d`,
-      r.delayed ? "DELAYED" : "ON TRACK",
-    ]);
-
-    // Render Table with autoTable
     autoTable(doc, {
       startY: 68,
-      head: tableHeaders,
-      body: tableBody,
+      head: [headers],
+      body: rows,
       theme: "striped",
       headStyles: {
         fillColor: PRIMARY_COLOR,
         textColor: [255, 255, 255],
         fontStyle: "bold",
         fontSize: 8.5,
-        halign: "left",
       },
-      bodyStyles: {
-        fontSize: 8,
-        textColor: TEXT_DARK,
-      },
-      alternateRowStyles: {
-        fillColor: [248, 250, 252],
-      },
-      columnStyles: {
-        0: { fontStyle: "bold", cellWidth: 32 },
-        5: { halign: "center", fontStyle: "bold" },
-        6: { halign: "center", fontStyle: "bold" },
-      },
-      didParseCell: (data) => {
-        // Highlight delayed cells in red text
-        if (data.section === "body" && data.column.index === 6) {
-          if (data.cell.raw === "DELAYED") {
-            data.cell.styles.textColor = RED_COLOR;
-          } else {
-            data.cell.styles.textColor = [5, 150, 105];
-          }
-        }
-      },
+      bodyStyles: { fontSize: 8, textColor: TEXT_DARK },
+      alternateRowStyles: { fillColor: [248, 250, 252] },
       margin: { left: 14, right: 14, bottom: 15 },
       didDrawPage: (data) => {
-        // Footer Page Numbering
         const pageCount = doc.internal.getNumberOfPages();
         doc.setFontSize(8);
         doc.setTextColor(148, 163, 184);
-        doc.setFont("helvetica", "normal");
         doc.text(
           `Page ${data.pageNumber} of ${pageCount} · EIC Claim Management System`,
           doc.internal.pageSize.width / 2,
@@ -484,7 +767,7 @@ export default function Reports() {
       },
     });
 
-    doc.save(`EIC_Workflow_Report_${stream}_${fileNameDate}.pdf`);
+    doc.save(`EIC_${reportType}_${stream}_${fileNameDate}.pdf`);
   };
 
   const exportExcel = async () => {
@@ -492,22 +775,17 @@ export default function Reports() {
     workbook.creator = "Ethiopian Insurance Corporation";
     workbook.created = new Date();
 
-    const PRIMARY_HEX = "2563EB";
-    // eslint-disable-next-line no-unused-vars
-    const LIGHT_GRAY_HEX = "F1F5F9";
     const HEADER_FILL = {
       type: "pattern",
       pattern: "solid",
-      fgColor: { argb: PRIMARY_HEX },
+      fgColor: { argb: "2563EB" },
     };
-
     const HEADER_FONT = {
       name: "Calibri",
       size: 11,
       bold: true,
       color: { argb: "FFFFFF" },
     };
-
     const BORDER_STYLE = {
       top: { style: "thin", color: { argb: "E2E8F0" } },
       bottom: { style: "thin", color: { argb: "E2E8F0" } },
@@ -515,131 +793,50 @@ export default function Reports() {
       right: { style: "thin", color: { argb: "E2E8F0" } },
     };
 
-    // --- SHEET 1: SUMMARY DASHBOARD ---
     const wsSummary = workbook.addWorksheet("Executive Summary");
-
     wsSummary.columns = [
       { header: "Key Metric", key: "metric", width: 25 },
       { header: "Value", key: "value", width: 30 },
     ];
-
-    // Header Styling
     wsSummary.getRow(1).eachCell((cell) => {
       cell.fill = HEADER_FILL;
       cell.font = HEADER_FONT;
-      cell.alignment = { vertical: "middle" };
     });
-
     wsSummary.addRows([
+      { metric: "Report", value: currentReportLabel },
       { metric: "Report Stream", value: streamLabel },
       { metric: "Selected Period", value: period },
       {
         metric: "Generated Timestamp",
         value: moment().format("YYYY-MM-DD HH:mm:ss"),
       },
-      { metric: "Total Claims Received", value: totalClaims },
-      { metric: "Currently Active Claims", value: activeClaims.length },
-      { metric: "Delayed Claims (>7 Days)", value: delayedClaims.length },
-      { metric: "Closed/Completed Claims", value: closedClaims.length },
+      { metric: "Total Claims", value: totalClaims },
+      { metric: "Active Claims", value: activeClaims.length },
+      { metric: "Delayed Claims", value: delayedClaims.length },
+      { metric: "Closed Claims", value: closedClaims.length },
     ]);
-
-    wsSummary.eachRow((row, rowNumber) => {
-      if (rowNumber > 1) {
-        row.eachCell((cell) => {
-          cell.border = BORDER_STYLE;
-          cell.font = { name: "Calibri", size: 10 };
-        });
-      }
+    wsSummary.eachRow((row, i) => {
+      if (i > 1) row.eachCell((cell) => (cell.border = BORDER_STYLE));
     });
 
-    // --- SHEET 2: PENDING & DELAYED CLAIMS ---
-    const wsPending = workbook.addWorksheet("Pending & Delayed");
-
-    wsPending.columns = [
-      { header: "Claim Reference", key: "ref", width: 22 },
-      { header: "Insured Name", key: "insured", width: 25 },
-      { header: "Status", key: "status", width: 20 },
-      { header: "Current Stage", key: "stage", width: 28 },
-      { header: "Responsible Party", key: "responsible", width: 24 },
-      { header: "Entered Stage Date", key: "entered", width: 18 },
-      { header: "Days in Stage", key: "days", width: 14 },
-      { header: "Indicator", key: "indicator", width: 14 },
-    ];
-
-    // Table Headers
-    const headerRow = wsPending.getRow(1);
-    headerRow.height = 24;
-    headerRow.eachCell((cell) => {
+    const { headers, rows } = getExportTable();
+    const wsData = workbook.addWorksheet(currentReportLabel.slice(0, 31));
+    wsData.columns = headers.map((h) => ({ header: h, key: h, width: 22 }));
+    wsData.getRow(1).eachCell((cell) => {
       cell.fill = HEADER_FILL;
       cell.font = HEADER_FONT;
-      cell.alignment = { vertical: "middle", horizontal: "center" };
     });
-
-    // Table Body Rows
-    pendingDelayedRows.forEach((r, idx) => {
-      const row = wsPending.addRow({
-        ref: r.claim_reference || "N/A",
-        insured: r.insured || "—",
-        status: String(r.status || "").replace(/_/g, " "),
-        stage: r.stage || "—",
-        responsible: r.responsible || "—",
-        entered: r.entered ? moment(r.entered).format("YYYY-MM-DD") : "—",
-        days: r.days || 0,
-        indicator: r.delayed ? "DELAYED" : "On Track",
-      });
-
-      // Zebra striping
-      const isEven = idx % 2 === 0;
-      const rowFill = isEven
-        ? null
-        : { type: "pattern", pattern: "solid", fgColor: { argb: "F8FAFC" } };
-
-      row.eachCell((cell, colNumber) => {
-        if (rowFill) cell.fill = rowFill;
-        cell.border = BORDER_STYLE;
-        cell.font = { name: "Calibri", size: 10 };
-        cell.alignment = { vertical: "middle" };
-
-        // Number formatting for Days column
-        if (colNumber === 7) {
-          cell.alignment = { vertical: "middle", horizontal: "right" };
-          cell.numFmt = "#,##0";
-        }
-
-        // Highlight Delayed rows
-        if (colNumber === 8) {
-          cell.alignment = { vertical: "middle", horizontal: "center" };
-          if (r.delayed) {
-            cell.font = {
-              name: "Calibri",
-              size: 10,
-              bold: true,
-              color: { argb: "DC2626" },
-            };
-            cell.fill = {
-              type: "pattern",
-              pattern: "solid",
-              fgColor: { argb: "FEE2E2" },
-            };
-          } else {
-            cell.font = {
-              name: "Calibri",
-              size: 10,
-              bold: true,
-              color: { argb: "059669" },
-            };
-          }
-        }
-      });
+    rows.forEach((r) => {
+      const row = wsData.addRow(r);
+      row.eachCell((cell) => (cell.border = BORDER_STYLE));
     });
+    if (rows.length > 0) {
+      wsData.autoFilter = {
+        from: { row: 1, column: 1 },
+        to: { row: rows.length + 1, column: headers.length },
+      };
+    }
 
-    // Enable Auto Filter on main data table
-    wsPending.autoFilter = {
-      from: { row: 1, column: 1 },
-      to: { row: pendingDelayedRows.length + 1, column: 8 },
-    };
-
-    // --- SHEET 3: TREND DATA ---
     const wsTrend = workbook.addWorksheet("Workflow Trend");
     wsTrend.columns = [
       { header: "Period", key: "label", width: 20 },
@@ -649,32 +846,13 @@ export default function Reports() {
       cell.fill = HEADER_FILL;
       cell.font = HEADER_FONT;
     });
-    trendData.forEach((t) => {
-      const row = wsTrend.addRow(t);
-      row.eachCell((cell) => (cell.border = BORDER_STYLE));
-    });
+    trendData.forEach((t) => wsTrend.addRow(t));
 
-    // --- SHEET 4: SOURCE DATA ---
-    const wsSource = workbook.addWorksheet("Claim Sources");
-    wsSource.columns = [
-      { header: "Office / Unit Type", key: "name", width: 24 },
-      { header: "Claims Received", key: "count", width: 18 },
-    ];
-    wsSource.getRow(1).eachCell((cell) => {
-      cell.fill = HEADER_FILL;
-      cell.font = HEADER_FONT;
-    });
-    sourceData.forEach((s) => {
-      const row = wsSource.addRow(s);
-      row.eachCell((cell) => (cell.border = BORDER_STYLE));
-    });
-
-    // Save File
     const buffer = await workbook.xlsx.writeBuffer();
     const fileNameDate = moment().format("YYYYMMDD_HHmm");
     saveAs(
-      new Blob([buffer], { type: "application/octet-stream" }),
-      `EIC_Workflow_Report_${stream}_${fileNameDate}.xlsx`,
+      new Blob([buffer]),
+      `EIC_${reportType}_${stream}_${fileNameDate}.xlsx`,
     );
   };
 
@@ -694,7 +872,7 @@ export default function Reports() {
             Reports & Analytics
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Workflow monitoring — Claim Division and GIO cases
+            Claim Operation Division — workflow &amp; performance reports
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -717,34 +895,34 @@ export default function Reports() {
         </div>
       </div>
 
-      {canSwitch ? (
-        <div className="flex gap-2">
-          {[
-            { value: "Claim_Division", label: "Claim Division" },
-            { value: "GIO_Approval", label: "GIO Cases" },
-            { value: "all", label: "All" },
-          ].map((t) => (
-            <Button
-              key={t.value}
-              size="sm"
-              variant={streamChoice === t.value ? "default" : "outline"}
-              onClick={() => {
-                setStreamChoice(t.value);
-                setPage(1);
-              }}
-            >
-              {t.label}
-            </Button>
-          ))}
-        </div>
-      ) : (
-        <p className="text-sm text-muted-foreground">
-          Showing: {stream === "GIO_Approval" ? "GIO Cases" : "Claim Division"}
-        </p>
-      )}
+      <div className="flex flex-wrap gap-3 items-center justify-between">
+        {canSwitch ? (
+          <div className="flex gap-2">
+            {[
+              { value: "Claim_Division", label: "Claim Division" },
+              { value: "GIO_Approval", label: "GIO Cases" },
+              { value: "all", label: "All" },
+            ].map((t) => (
+              <Button
+                key={t.value}
+                size="sm"
+                variant={streamChoice === t.value ? "default" : "outline"}
+                onClick={() => {
+                  setStreamChoice(t.value);
+                  setPage(1);
+                }}
+              >
+                {t.label}
+              </Button>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Showing:{" "}
+            {stream === "GIO_Approval" ? "GIO Cases" : "Claim Division"}
+          </p>
+        )}
 
-      {/* Date period */}
-      <div className="flex justify-end">
         <Select
           value={period}
           onValueChange={(v) => {
@@ -767,7 +945,28 @@ export default function Reports() {
         </Select>
       </div>
 
-      {/* KPIs */}
+      {/* Report type selector */}
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        {REPORT_TYPES.map((r) => (
+          <button
+            key={r.value}
+            onClick={() => {
+              setReportType(r.value);
+              setPage(1);
+            }}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
+              reportType === r.value
+                ? "bg-primary text-primary-foreground shadow-sm"
+                : "bg-muted text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <r.icon className="w-3.5 h-3.5" />
+            {r.label}
+          </button>
+        ))}
+      </div>
+
+      {/* KPIs — always visible as the Management Dashboard baseline */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="border-0 shadow-sm">
           <CardContent className="p-4">
@@ -817,66 +1016,465 @@ export default function Reports() {
         </Card>
       </div>
 
-      {/* Pending & Delayed */}
-      <Card className="border-0 shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Pending & Delayed Claims</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Active claims in the selected stream. Delayed if &gt;{" "}
-            {DELAY_DAYS_THRESHOLD} days in stage or past due date.
-          </p>
-        </CardHeader>
-        <CardContent className="overflow-x-auto">
-          {pendingDelayedRows.length === 0 ? (
-            <p className="text-sm text-muted-foreground text-center py-8">
-              No active claims
+      {/* ---- Report-specific content ---- */}
+
+      {(reportType === "tracking" || reportType === "pending") && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">
+              {reportType === "pending"
+                ? "Pending Claims"
+                : "Claim Status / Tracking"}
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Active claims in the selected stream. Delayed if &gt;{" "}
+              {DELAY_DAYS_THRESHOLD} days in stage or past due date.
             </p>
-          ) : (
-            <>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {pendingDelayedRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No active claims
+              </p>
+            ) : (
+              <>
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => toggleSort("claim")}
+                        >
+                          Claim Number <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="text-xs">Insured</TableHead>
+                      <TableHead className="text-xs">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => toggleSort("status")}
+                        >
+                          Status <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="text-xs">Current Stage</TableHead>
+                      <TableHead className="text-xs">Responsible</TableHead>
+                      <TableHead className="text-xs">Entered Stage</TableHead>
+                      <TableHead className="text-xs">
+                        <button
+                          type="button"
+                          className="inline-flex items-center gap-1"
+                          onClick={() => toggleSort("days")}
+                        >
+                          Days <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="text-xs">Indicator</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {pageRows.map((r) => (
+                      <TableRow key={r.id}>
+                        <TableCell className="text-xs font-medium">
+                          {r.claim_reference}
+                        </TableCell>
+                        <TableCell className="text-xs">{r.insured}</TableCell>
+                        <TableCell>
+                          <Badge
+                            variant="secondary"
+                            className={`text-[10px] ${STATUS_COLORS[r.status] || ""}`}
+                          >
+                            {String(r.status || "").replace(/_/g, " ")}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs max-w-[160px] truncate">
+                          {r.stage}
+                        </TableCell>
+                        <TableCell className="text-xs">
+                          {r.responsible}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {r.entered
+                            ? moment(r.entered).format("DD MMM YYYY")
+                            : "—"}
+                        </TableCell>
+                        <TableCell
+                          className={`text-xs font-semibold ${r.delayed ? "text-red-600" : ""}`}
+                        >
+                          {r.days}
+                        </TableCell>
+                        <TableCell>
+                          {r.delayed ? (
+                            <Badge className="bg-red-100 text-red-700 text-[10px]">
+                              Delayed
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">
+                              On track
+                            </Badge>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 mt-2 border-t">
+                  <p className="text-xs text-muted-foreground">
+                    Showing {showingFrom}–{showingTo} of{" "}
+                    {pendingDelayedRows.length} claims
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1"
+                      disabled={safePage <= 1}
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    >
+                      <ChevronLeft className="w-4 h-4" /> Prev
+                    </Button>
+                    <span className="text-xs text-muted-foreground tabular-nums px-1">
+                      Page {safePage} of {totalPages}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1"
+                      disabled={safePage >= totalPages}
+                      onClick={() =>
+                        setPage((p) => Math.min(totalPages, p + 1))
+                      }
+                    >
+                      Next <ChevronRight className="w-4 h-4" />
+                    </Button>
+                  </div>
+                </div>
+              </>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === "tat" && (
+        <>
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                Turnaround Time by Stage
+              </CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Average days spent in each stage, based on completed activities.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {tatByStage.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  No completed stage data yet
+                </p>
+              ) : (
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart
+                    data={tatByStage}
+                    layout="vertical"
+                    margin={{ left: 40 }}
+                  >
+                    <XAxis type="number" tick={{ fontSize: 10 }} />
+                    <YAxis
+                      dataKey="stage"
+                      type="category"
+                      width={160}
+                      tick={{ fontSize: 9 }}
+                    />
+                    <Tooltip />
+                    <Bar
+                      dataKey="avgDays"
+                      fill="#2563eb"
+                      radius={[0, 6, 6, 0]}
+                      name="Avg Days"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">
+                Turnaround Time by Performer
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              {tatByPerformer.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-8">
+                  No data yet
+                </p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="text-xs">Performer</TableHead>
+                      <TableHead className="text-xs">
+                        Stages Completed
+                      </TableHead>
+                      <TableHead className="text-xs">
+                        Avg Days / Stage
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {tatByPerformer.map((p) => (
+                      <TableRow key={p.performer}>
+                        <TableCell className="text-xs">{p.performer}</TableCell>
+                        <TableCell className="text-xs">
+                          {p.stagesCompleted}
+                        </TableCell>
+                        <TableCell className="text-xs font-semibold">
+                          {p.avgDays}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
+
+      {reportType === "bottleneck" && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">
+              Bottleneck / Delay (Aging)
+            </CardTitle>
+            <p className="text-xs text-muted-foreground">
+              Stages currently open longer than {DELAY_DAYS_THRESHOLD} days.
+            </p>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {bottleneckRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No bottlenecked stages
+              </p>
+            ) : (
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="text-xs">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1"
-                        onClick={() => toggleSort("claim")}
-                      >
-                        Claim Number <ArrowUpDown className="w-3 h-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead className="text-xs">Insured</TableHead>
-                    <TableHead className="text-xs">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1"
-                        onClick={() => toggleSort("status")}
-                      >
-                        Status <ArrowUpDown className="w-3 h-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead className="text-xs">Current Stage</TableHead>
-                    <TableHead className="text-xs">Responsible</TableHead>
-                    <TableHead className="text-xs">Entered Stage</TableHead>
-                    <TableHead className="text-xs">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1"
-                        onClick={() => toggleSort("days")}
-                      >
-                        Days <ArrowUpDown className="w-3 h-3" />
-                      </button>
-                    </TableHead>
-                    <TableHead className="text-xs">Indicator</TableHead>
+                    <TableHead className="text-xs">Claim Ref</TableHead>
+                    <TableHead className="text-xs">Stage</TableHead>
+                    <TableHead className="text-xs">Performer</TableHead>
+                    <TableHead className="text-xs">Department</TableHead>
+                    <TableHead className="text-xs">Days Open</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {pageRows.map((r) => (
+                  {bottleneckRows.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="text-xs font-medium">
                         {r.claim_reference}
                       </TableCell>
+                      <TableCell className="text-xs">{r.stage}</TableCell>
+                      <TableCell className="text-xs">{r.performer}</TableCell>
+                      <TableCell className="text-xs">
+                        {String(r.department).replace(/_/g, " ")}
+                      </TableCell>
+                      <TableCell className="text-xs font-semibold text-red-600">
+                        {r.days}d
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === "district" && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">
+              District / Branch Claims Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {districtSummary.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No data
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Office / Branch</TableHead>
+                    <TableHead className="text-xs">Volume</TableHead>
+                    <TableHead className="text-xs">Avg TAT (days)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {districtSummary.map((d) => (
+                    <TableRow key={d.office}>
+                      <TableCell className="text-xs">{d.office}</TableCell>
+                      <TableCell className="text-xs font-semibold">
+                        {d.volume}
+                      </TableCell>
+                      <TableCell className="text-xs">{d.avgTAT}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === "class" && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Class-of-Business Summary</CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {classSummary.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No data
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Class of Business</TableHead>
+                    <TableHead className="text-xs">Volume</TableHead>
+                    <TableHead className="text-xs">Closed</TableHead>
+                    <TableHead className="text-xs">
+                      Total Amount (ETB)
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {classSummary.map((c) => (
+                    <TableRow key={c.type}>
+                      <TableCell className="text-xs">{c.type}</TableCell>
+                      <TableCell className="text-xs font-semibold">
+                        {c.count}
+                      </TableCell>
+                      <TableCell className="text-xs">{c.closed}</TableCell>
+                      <TableCell className="text-xs">
+                        {c.amount.toLocaleString()}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === "decision" && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Decision Outcome</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {decisionRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No decision data captured yet — this populates once the
+                per-stage decision field (Total Loss / Repair / Less Salvage /
+                Cash Option) is recorded on the Decision stage.
+              </p>
+            ) : (
+              <ResponsiveContainer width="100%" height={260}>
+                <BarChart data={decisionSummary}>
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === "payment" && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Payment / Disbursement</CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {paymentRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No payment data captured yet — this populates once payee and
+                final payment amount are recorded on the Discharge &amp; Payment
+                stage.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Claim Ref</TableHead>
+                    <TableHead className="text-xs">Payee</TableHead>
+                    <TableHead className="text-xs">Amount (ETB)</TableHead>
+                    <TableHead className="text-xs">Payment Date</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paymentRows.map((r, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs">
+                        {r.claim_reference}
+                      </TableCell>
+                      <TableCell className="text-xs">{r.payee}</TableCell>
+                      <TableCell className="text-xs font-semibold">
+                        {r.amount.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {r.date ? moment(r.date).format("DD MMM YYYY") : "—"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === "recovery" && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">
+              Subrogation / Recovery-Linked Claims
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {recoveryRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No linked claims in this period
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Claim Ref</TableHead>
+                    <TableHead className="text-xs">Insured</TableHead>
+                    <TableHead className="text-xs">Type</TableHead>
+                    <TableHead className="text-xs">Status</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {recoveryRows.map((r, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs font-medium">
+                        {r.claim_reference}
+                      </TableCell>
                       <TableCell className="text-xs">{r.insured}</TableCell>
+                      <TableCell className="text-xs">{r.type}</TableCell>
                       <TableCell>
                         <Badge
                           variant="secondary"
@@ -885,28 +1483,68 @@ export default function Reports() {
                           {String(r.status || "").replace(/_/g, " ")}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-xs max-w-[160px] truncate">
-                        {r.stage}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {reportType === "doa" && (
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">Approval / DoA Compliance</CardTitle>
+            <p className="text-xs text-muted-foreground">
+              {doaViolations.length > 0 ? (
+                <span className="text-red-600 font-medium">
+                  {doaViolations.length} claim(s) outside delegated authority
+                </span>
+              ) : (
+                "All current approvals are within delegated authority"
+              )}
+            </p>
+          </CardHeader>
+          <CardContent className="overflow-x-auto">
+            {doaRows.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                No claims with an active approver to check
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Claim Ref</TableHead>
+                    <TableHead className="text-xs">Amount (ETB)</TableHead>
+                    <TableHead className="text-xs">Required Role</TableHead>
+                    <TableHead className="text-xs">Actual Role</TableHead>
+                    <TableHead className="text-xs">Compliant</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {doaRows.map((r, i) => (
+                    <TableRow key={i}>
+                      <TableCell className="text-xs font-medium">
+                        {r.claim_reference}
                       </TableCell>
-                      <TableCell className="text-xs">{r.responsible}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {r.entered
-                          ? moment(r.entered).format("DD MMM YYYY")
-                          : "—"}
+                      <TableCell className="text-xs">
+                        {r.amount?.toLocaleString()}
                       </TableCell>
-                      <TableCell
-                        className={`text-xs font-semibold ${r.delayed ? "text-red-600" : ""}`}
-                      >
-                        {r.days}
+                      <TableCell className="text-xs">
+                        {String(r.requiredRole).replace(/_/g, " ")}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {String(r.actualRole).replace(/_/g, " ")}
                       </TableCell>
                       <TableCell>
-                        {r.delayed ? (
-                          <Badge className="bg-red-100 text-red-700 text-[10px]">
-                            Delayed
+                        {r.compliant ? (
+                          <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">
+                            Compliant
                           </Badge>
                         ) : (
-                          <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">
-                            On track
+                          <Badge className="bg-red-100 text-red-700 text-[10px]">
+                            Violation
                           </Badge>
                         )}
                       </TableCell>
@@ -914,116 +1552,92 @@ export default function Reports() {
                   ))}
                 </TableBody>
               </Table>
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 mt-2 border-t">
-                <p className="text-xs text-muted-foreground">
-                  Showing {showingFrom}–{showingTo} of{" "}
-                  {pendingDelayedRows.length} claims
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Trend + Source stay visible for the overview-style reports */}
+      {["tracking", "pending"].includes(reportType) && (
+        <>
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+              <CardTitle className="text-sm">Claim Workflow Trend</CardTitle>
+              <Select
+                value={trendGranularity}
+                onValueChange={setTrendGranularity}
+              >
+                <SelectTrigger className="w-32 h-8">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="daily">Daily</SelectItem>
+                  <SelectItem value="weekly">Weekly</SelectItem>
+                  <SelectItem value="monthly">Monthly</SelectItem>
+                  <SelectItem value="yearly">Yearly</SelectItem>
+                </SelectContent>
+              </Select>
+            </CardHeader>
+            <CardContent>
+              {trendData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={260}>
+                  <LineChart data={trendData}>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      className="opacity-30"
+                    />
+                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Line
+                      type="monotone"
+                      dataKey="count"
+                      stroke="#2563eb"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                      name="Claims"
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-12">
+                  No data
                 </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 gap-1"
-                    disabled={safePage <= 1}
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    Prev
-                  </Button>
-                  <span className="text-xs text-muted-foreground tabular-nums px-1">
-                    Page {safePage} of {totalPages}
-                  </span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 gap-1"
-                    disabled={safePage >= totalPages}
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                  >
-                    Next
-                    <ChevronRight className="w-4 h-4" />
-                  </Button>
-                </div>
-              </div>
-            </>
-          )}
-        </CardContent>
-      </Card>
+              )}
+            </CardContent>
+          </Card>
 
-      {/* Trend */}
-      <Card className="border-0 shadow-sm">
-        <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-          <CardTitle className="text-sm">Claim Workflow Trend</CardTitle>
-          <Select value={trendGranularity} onValueChange={setTrendGranularity}>
-            <SelectTrigger className="w-32 h-8">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="daily">Daily</SelectItem>
-              <SelectItem value="weekly">Weekly</SelectItem>
-              <SelectItem value="monthly">Monthly</SelectItem>
-              <SelectItem value="yearly">Yearly</SelectItem>
-            </SelectContent>
-          </Select>
-        </CardHeader>
-        <CardContent>
-          {trendData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <LineChart data={trendData}>
-                <CartesianGrid strokeDasharray="3 3" className="opacity-30" />
-                <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Line
-                  type="monotone"
-                  dataKey="count"
-                  stroke="#2563eb"
-                  strokeWidth={2}
-                  dot={{ r: 3 }}
-                  name="Claims"
-                />
-              </LineChart>
-            </ResponsiveContainer>
-          ) : (
-            <p className="text-sm text-muted-foreground text-center py-12">
-              No data
-            </p>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Claim source */}
-      <Card className="border-0 shadow-sm">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-sm">Claim Source</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Originating office type (Service Center, District, etc.)
-          </p>
-        </CardHeader>
-        <CardContent>
-          {sourceData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={sourceData}>
-                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                <Tooltip />
-                <Bar
-                  dataKey="count"
-                  fill="#2563eb"
-                  radius={[6, 6, 0, 0]}
-                  name="Claims"
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          ) : (
-            <p className="text-sm text-muted-foreground text-center py-12">
-              No source data
-            </p>
-          )}
-        </CardContent>
-      </Card>
+          <Card className="border-0 shadow-sm">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Claim Source</CardTitle>
+              <p className="text-xs text-muted-foreground">
+                Originating office type (Service Center, District, etc.)
+              </p>
+            </CardHeader>
+            <CardContent>
+              {sourceData.length > 0 ? (
+                <ResponsiveContainer width="100%" height={260}>
+                  <BarChart data={sourceData}>
+                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <Bar
+                      dataKey="count"
+                      fill="#2563eb"
+                      radius={[6, 6, 0, 0]}
+                      name="Claims"
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-12">
+                  No source data
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

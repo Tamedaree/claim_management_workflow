@@ -31,6 +31,7 @@ import {
   ArrowUpRight,
   Flag,
   Lock,
+  RotateCcw,
 } from "lucide-react";
 import {
   ROLE_LABELS,
@@ -41,6 +42,7 @@ import {
   nextTierEntry,
   getStageLabel,
   getStageDescription,
+  canActOnGioStage,
 } from "@/lib/roleConfig";
 import moment from "moment";
 
@@ -51,7 +53,16 @@ const toDisplayStatus = (s) => {
 };
 
 /** Stage where Chief of GIO assigns a GIO Claim Adjuster */
-const ASSIGN_ADJUSTER_STAGE = "Chief of GIO Decision";
+const ASSIGN_MANAGER_STAGE = "Director Assignment";
+const ASSIGN_PRINCIPAL_STAGE = "Manager Assignment";
+
+// GIO cases can land on either of these statuses when returned — see
+// statusMapping.js / schema.prisma ClaimStatus enum. Neither is a bare
+// "Returned" value.
+const RETURNED_STATUSES = [
+  "Returned_for_Correction",
+  "Returned_to_Originating_Office",
+];
 
 export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
   const { toast } = useToast();
@@ -61,19 +72,25 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
   const [completionChoice, setCompletionChoice] = useState("forward");
   const [adjusters, setAdjusters] = useState([]);
   const [selectedAdjusterId, setSelectedAdjusterId] = useState("");
+  const [actionMode, setActionMode] = useState("forward"); // "forward" | "return"
+  const [returnTargetOrder, setReturnTargetOrder] = useState("");
+  const [resubmitting, setResubmitting] = useState(false);
 
   const activities = [...(claim?.activities || [])].sort(
     (a, b) => a.stage_order - b.stage_order,
   );
 
   const currentStage = activities.find((a) => a.status === "In_Progress");
-  const needsAdjusterAssign =
-    currentStage?.stage_name === ASSIGN_ADJUSTER_STAGE;
+  const needsManagerAssign = currentStage?.stage_name === ASSIGN_MANAGER_STAGE;
+  const needsPrincipalAssign =
+    currentStage?.stage_name === ASSIGN_PRINCIPAL_STAGE;
+  const needsAssign = needsManagerAssign || needsPrincipalAssign;
 
   const tierEntry = currentStage
     ? findTierEntry(GIO_APPROVAL_TIER, currentStage.stage_name)
     : null;
   const showTierChoice =
+    actionMode === "forward" &&
     tierEntry &&
     currentStage &&
     !isLastTierStage(GIO_APPROVAL_TIER, currentStage.stage_name);
@@ -81,13 +98,30 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
     ? nextTierEntry(GIO_APPROVAL_TIER, currentStage.stage_name)
     : null;
 
+  // Stages earlier than the current in-progress one — return targets
+  const earlierStages = currentStage
+    ? activities
+        .filter((a) => a.stage_order < currentStage.stage_order)
+        .sort((a, b) => b.stage_order - a.stage_order) // most recent first
+    : [];
+
+  const isReturned = RETURNED_STATUSES.includes(claim.status);
+  const canResubmit =
+    isReturned &&
+    (user?.id === claim.submitted_by_id ||
+      user?.role === "secretary" ||
+      user?.role === "admin");
+
   useEffect(() => {
-    if (!actionOpen || !needsAdjusterAssign) return;
+    if (!actionOpen || !needsAssign) return;
 
     let cancelled = false;
     (async () => {
       try {
-        const res = await api.get("/users?role=gio_claim_adjuster");
+        const role = needsManagerAssign
+          ? "gio_claim_manager"
+          : "gio_principal_claim_officer";
+        const res = await api.get(`/users?role=${role}`);
         const list = (res.data.data || []).filter((u) => u.is_active !== false);
         if (!cancelled) setAdjusters(list);
       } catch {
@@ -98,15 +132,79 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
     return () => {
       cancelled = true;
     };
-  }, [actionOpen, needsAdjusterAssign]);
+  }, [actionOpen, needsAssign, needsManagerAssign]);
 
   const selectedAdjuster = adjusters.find((a) => a.id === selectedAdjusterId);
 
+  const openActionDialog = (mode) => {
+    setActionMode(mode);
+    setReturnTargetOrder("");
+    setComments("");
+    setActionOpen(true);
+  };
+
   const handleComplete = async () => {
-    if (needsAdjusterAssign && !selectedAdjusterId) {
+    if (actionMode === "return") {
+      if (!returnTargetOrder) {
+        toast({
+          title: "Select a stage",
+          description: "Choose which earlier stage to return this case to.",
+          variant: "destructive",
+        });
+        return;
+      }
+      if (!comments.trim()) {
+        toast({
+          title: "Comments required",
+          description: "Explain what must be corrected.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      setProcessing(true);
+      try {
+        const targetStage = activities.find(
+          (a) => a.stage_order === Number(returnTargetOrder),
+        );
+        await api.post(`/claims/${claim.id}/return-stage`, {
+          comments,
+          target_stage_order: Number(returnTargetOrder),
+          target_stage_name: targetStage?.stage_name,
+        });
+        toast({
+          title: "Returned for correction",
+          description: `Sent back to "${getStageLabel(targetStage?.stage_name)}".`,
+        });
+        setActionOpen(false);
+        setComments("");
+        setReturnTargetOrder("");
+        setActionMode("forward");
+        onActivityUpdated?.();
+      } catch (e) {
+        toast({
+          title: "Error",
+          description: e.response?.data?.message || "Return failed",
+          variant: "destructive",
+        });
+      } finally {
+        setProcessing(false);
+      }
+      return;
+    }
+
+    if (needsManagerAssign && !selectedAdjusterId) {
       toast({
-        title: "Select adjuster",
-        description: "Choose a GIO Claim Adjuster to assign this case.",
+        title: "Select manager",
+        description: "Choose a GIO Claim Manager to assign this case.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (needsPrincipalAssign && !selectedAdjusterId) {
+      toast({
+        title: "Select principal",
+        description: "Choose a GIO Claim Principal to assign this case.",
         variant: "destructive",
       });
       return;
@@ -120,7 +218,7 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
         finalize: showTierChoice && completionChoice === "finalize",
       };
 
-      if (needsAdjusterAssign && selectedAdjuster) {
+      if (needsAssign && selectedAdjuster) {
         payload.assign_user_id = selectedAdjuster.id;
         payload.assign_user_name =
           selectedAdjuster.full_name ||
@@ -142,7 +240,7 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
         description:
           showTierChoice && completionChoice === "finalize"
             ? `"${getStageLabel(currentStage.stage_name)}" finalized — no further sign-off needed.`
-            : needsAdjusterAssign
+            : needsAssign
               ? `"${getStageLabel(currentStage.stage_name)}" completed. Assigned to ${payload.assign_user_name}.`
               : `"${getStageLabel(currentStage.stage_name)}" forwarded to the next stage.`,
         duration: 3000,
@@ -164,6 +262,26 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
     }
   };
 
+  const handleResubmit = async () => {
+    setResubmitting(true);
+    try {
+      await api.post(`/claims/${claim.id}/resubmit-stage`, { comments: "" });
+      toast({
+        title: "Resubmitted",
+        description: "Case has been resubmitted for review.",
+      });
+      onActivityUpdated?.();
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: e.response?.data?.message || "Failed to resubmit.",
+        variant: "destructive",
+      });
+    } finally {
+      setResubmitting(false);
+    }
+  };
+
   if (activities.length === 0) {
     return (
       <Card className="border-0 shadow-sm">
@@ -176,6 +294,35 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
 
   return (
     <>
+      {canResubmit && (
+        <Card className="border-0 shadow-sm border-l-4 border-l-orange-500 mb-4">
+          <CardContent className="p-4 space-y-3">
+            <div className="flex items-start gap-2">
+              <RotateCcw className="w-4 h-4 text-orange-600 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-semibold">
+                  This case was returned for correction
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Review the reviewer's comment on the relevant stage below,
+                  make the necessary corrections, then resubmit to continue the
+                  approval flow.
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              onClick={handleResubmit}
+              disabled={resubmitting}
+              className="gap-1.5"
+            >
+              <ArrowRight className="w-3.5 h-3.5" />
+              {resubmitting ? "Resubmitting..." : "Resubmit Case"}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
       <Card className="border-0 shadow-sm">
         <CardHeader className="pb-2 flex flex-row items-center justify-between">
           <CardTitle className="text-sm">GIO Case Workflow</CardTitle>
@@ -189,19 +336,17 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground mb-4">
-            This case follows the fixed GIO approval sequence, independent of
-            Claim Division&apos;s stages. Each approver can finalize or forward
-            the case as needed.
+            This case follows the fixed GIO approval sequence.
           </p>
 
           <div className="space-y-0">
             {activities.map((activity, i) => {
               const status = toDisplayStatus(activity.status);
               const isLast = i === activities.length - 1;
-              const mine =
-                user?.role === "admin" ||
-                user?.role === "chief_of_gio" ||
-                activity.responsible_role === user?.role;
+              const mine = canActOnGioStage(
+                user?.role,
+                activity.responsible_role,
+              );
               const isSkipped = status === "Skipped";
 
               const icon =
@@ -275,15 +420,28 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
                       {status === "In Progress" && (
                         <div>
                           {mine ? (
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-7 px-2 text-xs text-emerald-700 hover:text-emerald-800"
-                              onClick={() => setActionOpen(true)}
-                            >
-                              <ArrowRight className="w-3 h-3 mr-1" /> Complete
-                              &amp; Forward
-                            </Button>
+                            <div className="flex gap-1 flex-wrap justify-end">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 px-2 text-xs text-emerald-700 hover:text-emerald-800"
+                                onClick={() => openActionDialog("forward")}
+                              >
+                                <ArrowRight className="w-3 h-3 mr-1" /> Complete
+                                &amp; Forward
+                              </Button>
+                              {earlierStages.length > 0 && (
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-xs text-orange-700 hover:text-orange-800"
+                                  onClick={() => openActionDialog("return")}
+                                >
+                                  <RotateCcw className="w-3 h-3 mr-1" /> Return
+                                  for correction
+                                </Button>
+                              )}
+                            </div>
                           ) : (
                             <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                               <Lock className="w-3 h-3" />{" "}
@@ -344,12 +502,16 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
           setComments("");
           setCompletionChoice("forward");
           setSelectedAdjusterId("");
+          setReturnTargetOrder("");
+          setActionMode("forward");
         }}
       >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>
-              Complete — {getStageLabel(currentStage?.stage_name)}
+              {actionMode === "return"
+                ? `Return for Correction — ${getStageLabel(currentStage?.stage_name)}`
+                : `Complete — ${getStageLabel(currentStage?.stage_name)}`}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
@@ -358,21 +520,66 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
               {claim.gio_case_reason?.replace(/_/g, " ")}
             </p>
 
-            {/* Existing: assign GIO Claim Adjuster */}
-            {needsAdjusterAssign && (
+            {actionMode === "return" && (
+              <>
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-3">
+                  Use this when earlier-stage information is wrong or
+                  incomplete. The case will wait at the selected stage until it
+                  is corrected and resubmitted.
+                </p>
+
+                <div className="space-y-1.5">
+                  <Label className="text-xs">
+                    Return to which stage?{" "}
+                    <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={returnTargetOrder}
+                    onValueChange={setReturnTargetOrder}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select an earlier stage..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {earlierStages.map((a) => (
+                        <SelectItem key={a.id} value={String(a.stage_order)}>
+                          {getStageLabel(a.stage_name)} ·{" "}
+                          {ROLE_LABELS[a.responsible_role] ||
+                            a.responsible_role}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </>
+            )}
+
+            {actionMode === "forward" && needsAssign && (
               <div className="space-y-1.5">
-                <Label className="text-xs">Assign GIO Claim Adjuster *</Label>
+                <Label className="text-xs">
+                  {needsManagerAssign
+                    ? "Assign GIO Claim Manager *"
+                    : "Assign GIO Claim Principal *"}
+                </Label>
                 <Select
                   value={selectedAdjusterId}
                   onValueChange={setSelectedAdjusterId}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="Select GIO Claim Adjuster" />
+                    <SelectValue
+                      placeholder={
+                        needsManagerAssign
+                          ? "Select GIO Claim Manager"
+                          : "Select GIO Claim Principal"
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {adjusters.length === 0 ? (
                       <SelectItem value="_none" disabled>
-                        No active GIO claim adjusters found
+                        {needsManagerAssign
+                          ? "No active GIO Claim Managers found"
+                          : "No active GIO Claim Principals found"}
                       </SelectItem>
                     ) : (
                       adjusters.map((a) => (
@@ -392,7 +599,6 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
               </div>
             )}
 
-            {/* New: finalize vs forward */}
             {showTierChoice && (
               <div className="space-y-2 p-3 bg-amber-50/50 rounded-lg border border-amber-100">
                 <Label className="text-xs font-medium">
@@ -445,12 +651,21 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
             )}
 
             <div className="space-y-1.5">
-              <Label className="text-xs">Comments</Label>
+              <Label className="text-xs">
+                Comments{" "}
+                {actionMode === "return" && (
+                  <span className="text-red-500">*</span>
+                )}
+              </Label>
               <Textarea
                 value={comments}
                 onChange={(e) => setComments(e.target.value)}
                 rows={3}
-                placeholder="Notes on the decision or action taken..."
+                placeholder={
+                  actionMode === "return"
+                    ? "What needs to be corrected..."
+                    : "Notes on the decision or action taken..."
+                }
               />
             </div>
           </div>
@@ -462,12 +677,26 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
                 setComments("");
                 setCompletionChoice("forward");
                 setSelectedAdjusterId("");
+                setReturnTargetOrder("");
+                setActionMode("forward");
               }}
             >
               Cancel
             </Button>
-            <Button onClick={handleComplete} disabled={processing}>
-              {processing ? "Processing..." : "Confirm & Forward"}
+            <Button
+              onClick={handleComplete}
+              disabled={processing}
+              className={
+                actionMode === "return"
+                  ? "bg-orange-600 hover:bg-orange-700"
+                  : ""
+              }
+            >
+              {processing
+                ? "Processing..."
+                : actionMode === "return"
+                  ? "Confirm Return"
+                  : "Confirm & Forward"}
             </Button>
           </DialogFooter>
         </DialogContent>

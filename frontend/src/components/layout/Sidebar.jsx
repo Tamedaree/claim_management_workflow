@@ -3,7 +3,6 @@ import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   FileText,
-  ClipboardCheck,
   Bell,
   Settings,
   Users,
@@ -17,11 +16,11 @@ import {
   Workflow,
 } from "lucide-react";
 import {
-  canApproveClaims,
   canConfigureSystem,
   canViewAllClaims,
   canViewMyClaims,
   canViewGarages,
+  canViewAudit,
   canRegisterClaims,
   ROLE_LABELS,
 } from "@/lib/roleConfig";
@@ -51,19 +50,13 @@ export default function Sidebar({
       label: "Register Claim",
       icon: FileText,
       path: "/claims/register",
-      show: canRegisterClaims(role),
+      show: canRegisterClaims(role) && role !== "admin",
     },
     {
       label: "My Claims",
       icon: FileText,
       path: "/claims",
       show: canViewMyClaims(role),
-    },
-    {
-      label: "Approvals",
-      icon: ClipboardCheck,
-      path: "/approvals",
-      show: canApproveClaims(role),
     },
     {
       label: "All Claims",
@@ -75,7 +68,7 @@ export default function Sidebar({
       label: "Garage Tracking",
       icon: Wrench,
       path: "/garages",
-      show: canViewGarages(role),
+      show: canViewGarages(role) && role !== "admin",
     },
     { label: "Reports", icon: BarChart3, path: "/reports", show: true },
     { label: "Notifications", icon: Bell, path: "/notifications", show: true },
@@ -101,7 +94,13 @@ export default function Sidebar({
       label: "Audit Trail",
       icon: Shield,
       path: "/audit",
-      show: canApproveClaims(role) || canConfigureSystem(role),
+      show: canViewAudit(role),
+    },
+    {
+      label: "System Settings",
+      icon: Settings,
+      path: "/admin/system-settings",
+      show: canConfigureSystem(role),
     },
   ];
 

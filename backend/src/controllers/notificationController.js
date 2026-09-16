@@ -1,5 +1,5 @@
-import prisma from '../config/db.js';
-import ApiError from '../utils/ApiError.js';
+import prisma from "../config/db.js";
+import ApiError from "../utils/ApiError.js";
 
 // @desc    Get notifications for current user
 // @route   GET /api/notifications
@@ -12,23 +12,67 @@ export const getMyNotifications = async (req, res, next) => {
     };
 
     if (is_read !== undefined) {
-      where.is_read = is_read === 'true';
+      where.is_read = is_read === "true";
     }
     if (type) {
       where.type = type;
     }
 
+    if (req.user.role === "admin") {
+      const adminTypes = [
+        "account_locked",
+        "password_changed",
+        "security_alert",
+        "system_health",
+        "backup_failed",
+        "general",
+      ];
+      if (type) {
+        if (!adminTypes.includes(type)) {
+          return res.json({
+            success: true,
+            count: 0,
+            unreadCount: 0,
+            data: [],
+          });
+        }
+        where.type = type;
+      } else {
+        where.type = { in: adminTypes };
+      }
+    } else {
+      if (type) where.type = type;
+    }
+
+    if (is_read !== undefined) {
+      where.is_read = is_read === "true";
+    }
+
     const notifications = await prisma.notification.findMany({
       where,
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       take: 100,
     });
 
+    const unreadWhere = {
+      user_id: req.user.id,
+      is_read: false,
+    };
+    if (req.user.role === "admin") {
+      unreadWhere.type = {
+        in: [
+          "account_locked",
+          "password_changed",
+          "security_alert",
+          "system_health",
+          "backup_failed",
+          "general",
+        ],
+      };
+    }
+
     const unreadCount = await prisma.notification.count({
-      where: {
-        user_id: req.user.id,
-        is_read: false,
-      },
+      where: unreadWhere,
     });
 
     res.json({
@@ -51,12 +95,12 @@ export const getNotification = async (req, res, next) => {
     });
 
     if (!notification) {
-      throw new ApiError(404, 'Notification not found');
+      throw new ApiError(404, "Notification not found");
     }
 
     // Only owner can view
     if (notification.user_id !== req.user.id) {
-      throw new ApiError(403, 'Not authorized to view this notification');
+      throw new ApiError(403, "Not authorized to view this notification");
     }
 
     res.json({
@@ -72,10 +116,11 @@ export const getNotification = async (req, res, next) => {
 // @route   POST /api/notifications
 export const createNotification = async (req, res, next) => {
   try {
-    const { user_id, claim_id, claim_reference, title, message, type } = req.body;
+    const { user_id, claim_id, claim_reference, title, message, type } =
+      req.body;
 
     if (!user_id || !title || !message) {
-      throw new ApiError(400, 'user_id, title and message are required');
+      throw new ApiError(400, "user_id, title and message are required");
     }
 
     const notification = await prisma.notification.create({
@@ -85,7 +130,7 @@ export const createNotification = async (req, res, next) => {
         claim_reference,
         title,
         message,
-        type: type || 'general',
+        type: type || "general",
       },
     });
 
@@ -107,11 +152,11 @@ export const markAsRead = async (req, res, next) => {
     });
 
     if (!notification) {
-      throw new ApiError(404, 'Notification not found');
+      throw new ApiError(404, "Notification not found");
     }
 
     if (notification.user_id !== req.user.id) {
-      throw new ApiError(403, 'Not authorized');
+      throw new ApiError(403, "Not authorized");
     }
 
     const updated = await prisma.notification.update({
@@ -142,7 +187,7 @@ export const markAllAsRead = async (req, res, next) => {
 
     res.json({
       success: true,
-      message: 'All notifications marked as read',
+      message: "All notifications marked as read",
     });
   } catch (error) {
     next(error);
@@ -158,11 +203,11 @@ export const deleteNotification = async (req, res, next) => {
     });
 
     if (!notification) {
-      throw new ApiError(404, 'Notification not found');
+      throw new ApiError(404, "Notification not found");
     }
 
     if (notification.user_id !== req.user.id) {
-      throw new ApiError(403, 'Not authorized');
+      throw new ApiError(403, "Not authorized");
     }
 
     await prisma.notification.delete({
@@ -171,7 +216,7 @@ export const deleteNotification = async (req, res, next) => {
 
     res.json({
       success: true,
-      message: 'Notification deleted',
+      message: "Notification deleted",
     });
   } catch (error) {
     next(error);

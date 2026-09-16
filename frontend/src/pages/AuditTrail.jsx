@@ -1,657 +1,770 @@
-import { useState, useEffect, useCallback } from "react";
-import { Eye } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useOutletContext } from "react-router-dom";
+import api from "@/api/api";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "../components/ui/dialog";
-import { Button } from "../components/ui/button";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
-  fetchDataAuditLogs,
-  fetchAccessLogs,
-  fetchClaimTimeline,
-} from "../api/auditApi";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { canViewAudit, canExportAudit } from "@/lib/roleConfig";
+import { useToast } from "@/components/ui/use-toast";
+import {
+  ShieldCheck,
+  Search,
+  X,
+  Eye,
+  Globe,
+  Database,
+  Clock,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
+import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
+import ExportButton from "@/components/ExportButton";
+import moment from "moment";
 
-const TABS = [
-  { id: "changes", label: "Data Changes" },
-  { id: "access", label: "Access Logs" },
-  { id: "timeline", label: "Claim Timeline" },
+const ACCESS_ACTIONS = [
+  "LOGIN_SUCCESS",
+  "LOGIN_FAILED",
+  "LOGOUT",
+  "VIEW_CLAIM",
+  "EXPORT",
+  "API_CALL",
 ];
 
-export default function AuditTrail() {
-  const [activeTab, setActiveTab] = useState("changes");
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
-  return (
-    <div className="max-w-6xl mx-auto p-6">
-      <h1 className="text-2xl font-semibold text-gray-900 mb-1">Audit Trail</h1>
-      <p className="text-sm text-gray-500 mb-6">
-        Field-level data changes, access logs, and per-claim history.
-      </p>
-
-      <div className="flex gap-1 border-b border-gray-200 mb-6">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              activeTab === tab.id
-                ? "border-blue-600 text-blue-600"
-                : "border-transparent text-gray-500 hover:text-gray-800"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === "changes" && <DataChangesTab />}
-      {activeTab === "access" && <AccessLogsTab />}
-      {activeTab === "timeline" && <ClaimTimelineTab />}
-    </div>
-  );
+function statusTone(code) {
+  if (!code) return "bg-gray-100 text-gray-600";
+  if (code < 300) return "bg-emerald-100 text-emerald-700";
+  if (code < 400) return "bg-blue-100 text-blue-700";
+  if (code === 401 || code === 403) return "bg-amber-100 text-amber-700";
+  if (code >= 400) return "bg-red-100 text-red-700";
+  return "bg-gray-100 text-gray-600";
 }
 
-// ---------------------------------------------------------------------
-// Data Changes tab
-// ---------------------------------------------------------------------
-
-function DataChangesTab() {
-  const [filters, setFilters] = useState({
-    entityType: "",
-    entityId: "",
-    actorId: "",
-    from: "",
-    to: "",
-  });
-  const [logs, setLogs] = useState([]);
-  const [expandedId, setExpandedId] = useState(null);
-  const { loading, error, run } = useAsync();
-
-  const load = useCallback(() => {
-    run(() => fetchDataAuditLogs(filters).then(setLogs));
-  }, [filters, run]);
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div>
-      <FilterBar>
-        <select
-          className="border border-gray-300 rounded px-3 py-1.5 text-sm"
-          value={filters.entityType}
-          onChange={(e) =>
-            setFilters((f) => ({ ...f, entityType: e.target.value }))
-          }
-        >
-          <option value="">All entity types</option>
-          <option value="Claim">Claim</option>
-          <option value="StaffMember">StaffMember</option>
-          <option value="ApprovalThreshold">ApprovalThreshold</option>
-          <option value="WorkflowStage">WorkflowStage</option>
-          <option value="User">User</option>
-        </select>
-        <TextInput
-          placeholder="Entity ID"
-          value={filters.entityId}
-          onChange={(v) => setFilters((f) => ({ ...f, entityId: v }))}
-        />
-        <TextInput
-          placeholder="Actor (user) ID"
-          value={filters.actorId}
-          onChange={(v) => setFilters((f) => ({ ...f, actorId: v }))}
-        />
-        <DateInput
-          value={filters.from}
-          onChange={(v) => setFilters((f) => ({ ...f, from: v }))}
-          placeholder="From"
-        />
-        <DateInput
-          value={filters.to}
-          onChange={(v) => setFilters((f) => ({ ...f, to: v }))}
-          placeholder="To"
-        />
-        <ApplyButton onClick={load} />
-      </FilterBar>
-
-      {error && <ErrorBox message={error} />}
-      {loading && <LoadingBox />}
-
-      {!loading && !error && (
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-          <div className="overflow-x-auto px-4 sm:px-6">
-            <table className="w-full min-w-[720px] text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50/80 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="py-3 pr-4">When</th>
-                  <th className="py-3 pr-4">Entity</th>
-                  <th className="py-3 pr-4">Action</th>
-                  <th className="py-3 pr-4">Actor</th>
-                  <th className="py-3 pr-4">Changed fields</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {logs.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="py-6 text-center text-gray-400">
-                      No data changes found for these filters.
-                    </td>
-                  </tr>
-                )}
-                {logs.map((log) => (
-                  <>
-                    <tr
-                      key={log.id}
-                      className="cursor-pointer transition-colors hover:bg-blue-50/40"
-                      onClick={() =>
-                        setExpandedId(expandedId === log.id ? null : log.id)
-                      }
-                    >
-                      <td className="py-3 pr-4 whitespace-nowrap text-gray-600">
-                        {formatDate(log.createdAt)}
-                      </td>
-                      <td className="py-3 pr-4 font-medium text-gray-800">
-                        {log.entityType}{" "}
-                        <span className="text-gray-400">#{log.entityId}</span>
-                      </td>
-                      <td className="py-3 pr-4">
-                        <ActionBadge action={log.action} />
-                      </td>
-                      <td className="py-3 pr-4">
-                        {log.actorName || log.actorId || "—"}
-                        {log.actorRole && (
-                          <span className="text-gray-400">
-                            {" "}
-                            ({log.actorRole})
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 pr-4 text-gray-500">
-                        {log.changes
-                          ? Object.keys(log.changes).join(", ")
-                          : "—"}
-                      </td>
-                    </tr>
-                    {expandedId === log.id && log.changes && (
-                      <tr className="bg-gray-50">
-                        <td colSpan={5} className="p-4">
-                          <ChangesTable changes={log.changes} />
-                        </td>
-                      </tr>
-                    )}
-                  </>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+function methodTone(method) {
+  switch (method) {
+    case "GET":
+      return "bg-blue-100 text-blue-700";
+    case "POST":
+      return "bg-emerald-100 text-emerald-700";
+    case "PUT":
+    case "PATCH":
+      return "bg-amber-100 text-amber-700";
+    case "DELETE":
+      return "bg-red-100 text-red-700";
+    default:
+      return "bg-gray-100 text-gray-600";
+  }
 }
 
-// ---------------------------------------------------------------------
-// Access Logs tab
-// ---------------------------------------------------------------------
-
-function AccessLogsTab() {
-  const [filters, setFilters] = useState({
-    actorId: "",
-    path: "",
-    action: "",
-    from: "",
-    to: "",
-  });
-  const [logs, setLogs] = useState([]);
-  const [selectedLog, setSelectedLog] = useState(null);
-  const { loading, error, run } = useAsync();
-
-  const load = useCallback(() => {
-    run(() =>
-      fetchAccessLogs(filters).then((accessLogs) =>
-        setLogs(
-          [...accessLogs].sort(
-            (a, b) => new Date(b.createdAt) - new Date(a.createdAt),
-          ),
-        ),
-      ),
-    );
-  }, [filters, run]);
-
-  useEffect(() => {
-    load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div className="px-2 sm:px-4">
-      <FilterBar>
-        <TextInput
-          placeholder="Actor (user) ID"
-          value={filters.actorId}
-          onChange={(v) => setFilters((f) => ({ ...f, actorId: v }))}
-        />
-        <TextInput
-          placeholder="Path (e.g. /api/claims/123)"
-          value={filters.path}
-          onChange={(v) => setFilters((f) => ({ ...f, path: v }))}
-        />
-        <select
-          className="border border-gray-300 rounded px-3 py-1.5 text-sm"
-          value={filters.action}
-          onChange={(e) =>
-            setFilters((f) => ({ ...f, action: e.target.value }))
-          }
-        >
-          <option value="">All actions</option>
-          <option value="LOGIN_SUCCESS">Login success</option>
-          <option value="LOGIN_FAILED">Login failed</option>
-          <option value="LOGOUT">Logout</option>
-          <option value="VIEW_CLAIM">View claim</option>
-          <option value="EXPORT">Export</option>
-          <option value="API_CALL">API call</option>
-        </select>
-        <DateInput
-          value={filters.from}
-          onChange={(v) => setFilters((f) => ({ ...f, from: v }))}
-          placeholder="From"
-        />
-        <DateInput
-          value={filters.to}
-          onChange={(v) => setFilters((f) => ({ ...f, to: v }))}
-          placeholder="To"
-        />
-        <ApplyButton onClick={load} />
-      </FilterBar>
-
-      {error && <ErrorBox message={error} />}
-      {loading && <LoadingBox />}
-
-      {!loading && !error && (
-        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm">
-          <div className="overflow-x-auto px-4 sm:px-6">
-            <table className="w-full min-w-[980px] text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 bg-gray-50/80 text-left text-xs font-semibold uppercase tracking-wide text-gray-500">
-                  <th className="py-2 pr-4">When</th>
-                  <th className="py-2 pr-4">Actor</th>
-                  <th className="py-2 pr-4">Method</th>
-                  <th className="py-2 pr-4">Path</th>
-                  <th className="py-2 pr-4">Action</th>
-                  <th className="py-2 pr-4">Status</th>
-                  <th className="py-2 pr-4">IP</th>
-                  <th className="py-3 pr-5 text-right"> </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {logs.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="py-6 text-center text-gray-400">
-                      No access logs found for these filters.
-                    </td>
-                  </tr>
-                )}
-                {logs.map((log) => (
-                  <tr
-                    key={log.id}
-                    className="group transition-colors hover:bg-blue-50/40"
-                  >
-                    <td className="py-3 pr-4 whitespace-nowrap text-gray-600">
-                      {formatDate(log.createdAt)}
-                    </td>
-                    <td className="py-3 pr-4 font-medium text-gray-800">
-                      {log.actorName || log.actorId || "Anonymous"}
-                      {log.actorRole && (
-                        <span className="text-gray-400">
-                          {" "}
-                          ({log.actorRole})
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-3 pr-4 font-mono text-xs text-gray-600">
-                      {log.method}
-                    </td>
-                    <td
-                      className="max-w-[280px] truncate py-3 pr-4 font-mono text-xs text-gray-500"
-                      title={log.path}
-                    >
-                      {log.path}
-                    </td>
-                    <td className="py-3 pr-4">
-                      <ActionBadge action={log.action || "API_CALL"} />
-                    </td>
-                    <td className="py-3 pr-4">
-                      <span
-                        className={
-                          log.statusCode >= 400
-                            ? "text-red-600"
-                            : "text-gray-600"
-                        }
-                      >
-                        {log.statusCode ?? "—"}
-                      </span>
-                    </td>
-                    <td className="py-3 pr-4 font-mono text-xs text-gray-400">
-                      {log.ip || "—"}
-                    </td>
-                    <td className="py-3 pr-5 text-right">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-blue-700 opacity-80 transition-colors hover:bg-blue-100 hover:text-blue-800 group-hover:opacity-100"
-                        onClick={() => setSelectedLog(log)}
-                      >
-                        <Eye className="h-4 w-4" />
-                        View
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      <AccessLogDetailDialog
-        log={selectedLog}
-        onClose={() => setSelectedLog(null)}
-      />
-    </div>
-  );
+function actionTone(action) {
+  if (action?.includes("FAILED") || action?.includes("LOCKED"))
+    return "bg-red-100 text-red-700";
+  if (action?.includes("DELETE")) return "bg-red-100 text-red-700";
+  if (action?.includes("LOGIN") || action?.includes("CREATE"))
+    return "bg-emerald-100 text-emerald-700";
+  if (action?.includes("RETURN") || action?.includes("REJECT"))
+    return "bg-orange-100 text-orange-700";
+  return "bg-blue-100 text-blue-700";
 }
 
-function AccessLogDetailDialog({ log, onClose }) {
-  return (
-    <Dialog open={Boolean(log)} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto overflow-hidden rounded-2xl border-0 bg-white p-0 shadow-2xl">
-        <DialogHeader className="border-b border-blue-100 bg-blue-50/70 px-6 py-5 pr-14">
-          <p className="mb-1 text-xs font-semibold uppercase tracking-[0.18em] text-blue-600">
-            Audit event
-          </p>
-          <DialogTitle className="text-xl font-semibold text-gray-900">
-            Access log details
-          </DialogTitle>
-          <p className="text-sm text-gray-500">
-            Review the request context and response metadata for this event.
-          </p>
-        </DialogHeader>
-        {log && (
-          <dl className="grid grid-cols-1 gap-3 px-6 py-5 text-sm sm:grid-cols-2">
-            <DetailItem label="When" value={formatDate(log.createdAt)} />
-            <DetailItem
-              label="Actor"
-              value={log.actorName || log.actorId || "Anonymous"}
-            />
-            <DetailItem label="Role" value={log.actorRole} />
-            <DetailItem
-              label="Action"
-              value={log.action || "API_CALL"}
-              valueClassName="inline-flex rounded-full bg-blue-100 px-2.5 py-1 text-xs font-semibold text-blue-700"
-            />
-            <DetailItem label="Method" value={log.method} />
-            <DetailItem
-              label="Status"
-              value={log.statusCode}
-              valueClassName={
-                log.statusCode >= 400
-                  ? "inline-flex rounded-full bg-red-100 px-2.5 py-1 text-xs font-semibold text-red-700"
-                  : "inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700"
-              }
-            />
-            <DetailItem label="IP address" value={log.ip} />
-            <DetailItem
-              label="Duration"
-              value={log.durationMs != null ? `${log.durationMs} ms` : null}
-            />
-            <DetailItem label="Claim ID" value={log.claimId} />
-            <DetailItem label="Request ID" value={log.requestId} />
-            <DetailItem label="Path" value={log.path} wide />
-            <DetailItem label="User agent" value={log.userAgent} wide />
-          </dl>
-        )}
-        <DialogFooter className="border-t border-gray-100 bg-gray-50/80 px-6 py-4">
-          <Button type="button" className="rounded-lg px-5" onClick={onClose}>
-            Close
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function DetailItem({ label, value, wide, valueClassName }) {
-  return (
-    <div
-      className={`rounded-xl border border-gray-100 bg-gray-50/70 px-3.5 py-3 ${wide ? "sm:col-span-2" : ""}`}
-    >
-      <dt className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-400">
-        {label}
-      </dt>
-      <dd className={`mt-1 break-words text-gray-800 ${valueClassName || ""}`}>
-        {formatValue(value)}
-      </dd>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------
-// Claim Timeline tab
-// ---------------------------------------------------------------------
-
-function ClaimTimelineTab() {
-  const [claimReference, setClaimReference] = useState("");
-  const [timeline, setTimeline] = useState(null);
-  const { loading, error, run } = useAsync();
-
-  const load = () => {
-    if (!claimReference.trim()) return;
-    run(() =>
-      fetchClaimTimeline(claimReference.trim()).then((data) =>
-        setTimeline(data.timeline),
-      ),
-    );
-  };
-
-  return (
-    <div>
-      <FilterBar>
-        <TextInput
-          placeholder="Claim reference"
-          value={claimReference}
-          onChange={setClaimReference}
-        />
-        <ApplyButton label="Load timeline" onClick={load} />
-      </FilterBar>
-
-      {error && <ErrorBox message={error} />}
-      {loading && <LoadingBox />}
-
-      {!loading && !error && timeline && (
-        <ol className="relative border-l border-gray-200 ml-2">
-          {timeline.length === 0 && (
-            <p className="text-gray-400 text-sm py-4">
-              No activity recorded for this claim yet.
-            </p>
-          )}
-          {timeline.map((event, i) => (
-            <li key={i} className="mb-6 ml-4">
-              <span
-                className={`absolute -left-1.5 w-3 h-3 rounded-full border-2 border-white ${
-                  event.kind === "action"
-                    ? "bg-blue-500"
-                    : event.kind === "change"
-                      ? "bg-amber-500"
-                      : event.kind === "activity"
-                        ? "bg-emerald-500"
-                        : "bg-gray-400"
-                }`}
-              />
-              <time className="text-xs text-gray-400">
-                {formatDate(event.at)}
-              </time>
-              <p className="text-sm text-gray-800">
-                <span className="font-medium">
-                  {event.actorName || event.actorRole || "System"}
-                </span>{" "}
-                — {event.summary}
-              </p>
-              {event.kind === "change" && event.raw?.changes && (
-                <div className="mt-1">
-                  <ChangesTable changes={event.raw.changes} compact />
-                </div>
-              )}
-              {event.kind === "access" && (
-                <p className="mt-1 text-xs text-gray-500">
-                  {event.raw?.ip || "Unknown IP"}
-                  {event.raw?.durationMs != null
-                    ? ` · ${event.raw.durationMs} ms`
-                    : ""}
-                </p>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------
-// Shared small components
-// ---------------------------------------------------------------------
-function useAsync() {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  const run = useCallback(async (fn) => {
-    setLoading(true);
-    setError(null);
-    try {
-      await fn();
-    } catch (err) {
-      const message =
-        err.response?.data?.error || err.message || "Something went wrong";
-      setError(message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  return { loading, error, run };
-}
-
-function FilterBar({ children }) {
-  return <div className="flex flex-wrap gap-2 mb-4">{children}</div>;
-}
-
-function TextInput({ value, onChange, placeholder }) {
-  return (
-    <input
-      type="text"
-      className="border border-gray-300 rounded px-3 py-1.5 text-sm w-40"
-      placeholder={placeholder}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  );
-}
-
-function DateInput({ value, onChange, placeholder }) {
-  return (
-    <input
-      type="date"
-      className="border border-gray-300 rounded px-3 py-1.5 text-sm"
-      title={placeholder}
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    />
-  );
-}
-
-function ApplyButton({ onClick, label = "Apply" }) {
+function SortHeader({ label, field, sortField, sortDir, onSort }) {
+  const active = sortField === field;
   return (
     <button
-      onClick={onClick}
-      className="px-4 py-1.5 text-sm font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+      onClick={() => onSort(field)}
+      className="flex items-center gap-1 hover:text-foreground transition-colors"
     >
       {label}
+      {active ? (
+        sortDir === "asc" ? (
+          <ArrowUp className="w-3 h-3" />
+        ) : (
+          <ArrowDown className="w-3 h-3" />
+        )
+      ) : (
+        <ArrowUpDown className="w-3 h-3 text-muted-foreground/40" />
+      )}
     </button>
   );
 }
 
-function ErrorBox({ message }) {
+export default function AuditTrail() {
+  const { toast } = useToast();
+  const { user } = useOutletContext();
+  const role = user?.role;
+  const [tab, setTab] = useState("access"); 
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [status, setStatus] = useState("all");
+  const [page, setPage] = useState(1);
+  const [limit] = useState(50);
+  const [sortField, setSortField] = useState("createdAt");
+  const [sortDir, setSortDir] = useState("desc");
+  const [method, setMethod] = useState("all");
+  const [action, setAction] = useState("all");
+  const [rows, setRows] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [pages, setPages] = useState(1);
+  const [loading, setLoading] = useState(true);
+  const [detail, setDetail] = useState(null);
+  const [refreshKey, setRefreshKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      // Make the first setState async relative to the effect body
+      await Promise.resolve();
+      if (cancelled) return;
+
+      setLoading(true);
+      try {
+        const params = new URLSearchParams();
+        if (from) params.set("from", from);
+        if (to) params.set("to", to);
+        if (search) params.set("search", search);
+        if (status !== "all") params.set("status", status);
+        params.set("page", String(page));
+        params.set("limit", String(limit));
+        params.set("sortField", sortField);
+        params.set("sortDir", sortDir);
+
+        if (tab === "access") {
+          if (method !== "all") params.set("method", method);
+          if (action !== "all") params.set("action", action);
+          const res = await api.get(`/audit/access-logs?${params.toString()}`);
+          if (cancelled) return;
+          setRows(res.data.data || []);
+          setTotal(res.data.total ?? 0);
+          setPages(res.data.pages || 1);
+        } else {
+          const res = await api.get(`/audit/data-changes?${params.toString()}`);
+          if (cancelled) return;
+          setRows(res.data.data || []);
+          setTotal(res.data.total ?? 0);
+          setPages(res.data.pages || 1);
+        }
+      } catch {
+        if (!cancelled) {
+          setRows([]);
+          toast({
+            title: "Error",
+            description: "Failed to load audit records.",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    tab,
+    page,
+    limit,
+    sortField,
+    sortDir,
+    from,
+    to,
+    search,
+    status,
+    method,
+    action,
+    refreshKey,
+    toast,
+  ]);
+
+  if (!canViewAudit(role)) {
+    return (
+      <div className="p-8 text-center text-sm text-muted-foreground">
+        You do not have access to the audit log.
+      </div>
+    );
+  }
+
+  const applyFilters = () => {
+    setPage(1);
+    setRefreshKey((k) => k + 1);
+  };
+
+  const resetFilters = () => {
+    setFrom("");
+    setTo("");
+    setSearch("");
+    setStatus("all");
+    setMethod("all");
+    setAction("all");
+    setPage(1);
+    setRefreshKey((k) => k + 1);
+  };
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("desc");
+    }
+  };
+
+  const switchTab = (next) => {
+    setTab(next);
+    setPage(1);
+    setDetail(null);
+  };
+
+  const exportRows = (format) => {
+    const headers =
+      tab === "access"
+        ? [
+            "Date/Time",
+            "Actor",
+            "Role",
+            "Method",
+            "Path",
+            "Action",
+            "Status",
+            "IP",
+          ]
+        : [
+            "Date/Time",
+            "Actor",
+            "Role",
+            "Action",
+            "Entity Type",
+            "Entity ID",
+            "Fields Changed",
+          ];
+
+    const dataRows = rows.map((r) =>
+      tab === "access"
+        ? [
+            moment(r.createdAt).format("DD MMM YYYY, HH:mm:ss"),
+            r.actorName || r.actorId || "—",
+            r.actorRole || "—",
+            r.method,
+            r.path,
+            r.action,
+            r.statusCode,
+            r.ip || "—",
+          ]
+        : [
+            moment(r.createdAt).format("DD MMM YYYY, HH:mm:ss"),
+            r.actorName || r.actorId || "—",
+            r.actorRole || "—",
+            r.action,
+            r.entityType || "—",
+            r.entityId || "—",
+            r.changes ? Object.keys(r.changes).join(", ") : "—",
+          ],
+    );
+
+    const fn = `audit_${tab}_${moment().format("YYYY-MM-DD")}`;
+    if (format === "pdf") {
+      exportToPDF(
+        fn,
+        `EIC — Audit Log (${tab === "access" ? "Access" : "Data Changes"})`,
+        headers,
+        dataRows,
+        tab === "access"
+          ? [1.3, 1.4, 0.8, 0.7, 1.6, 1, 0.6, 0.9]
+          : [1.3, 1.2, 0.8, 1.1, 1, 1, 1.3],
+      );
+    } else {
+      exportToCSV(fn, headers, dataRows);
+    }
+  };
+
+  const hasActiveFilters =
+    from ||
+    to ||
+    search ||
+    status !== "all" ||
+    method !== "all" ||
+    action !== "all";
+
   return (
-    <div className="bg-red-50 text-red-700 text-sm px-4 py-2 rounded mb-4 border border-red-200">
-      {message}
+    <div className="max-w-7xl space-y-6">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
+            <ShieldCheck className="w-6 h-6 text-primary" /> Audit Log
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Read-only, append-only record of system activity
+          </p>
+        </div>
+      </div>
+
+      <div className="inline-flex items-center gap-1 bg-muted rounded-lg p-1">
+        <button
+          onClick={() => switchTab("access")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            tab === "access"
+              ? "bg-white shadow-sm text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Globe className="w-4 h-4" /> Access Logs
+        </button>
+        <button
+          onClick={() => switchTab("data")}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+            tab === "data"
+              ? "bg-white shadow-sm text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <Database className="w-4 h-4" /> Data Changes
+        </button>
+      </div>
+
+      <Card className="border-0 shadow-sm">
+        <CardContent className="p-4 grid grid-cols-2 md:grid-cols-6 gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">
+              From
+            </label>
+            <Input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground mb-1 block">
+              To
+            </label>
+            <Input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+            />
+          </div>
+
+          {tab === "access" ? (
+            <>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Method
+                </label>
+                <Select value={method} onValueChange={setMethod}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Methods</SelectItem>
+                    {HTTP_METHODS.map((m) => (
+                      <SelectItem key={m} value={m}>
+                        {m}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Action
+                </label>
+                <Select value={action} onValueChange={setAction}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Actions</SelectItem>
+                    {ACCESS_ACTIONS.map((a) => (
+                      <SelectItem key={a} value={a}>
+                        {a.replace(/_/g, " ")}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="md:col-span-2">
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Actor / Path Search
+                </label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    placeholder="email, /api/claims..."
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">
+                  Status
+                </label>
+                <Select value={status} onValueChange={setStatus}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="success">Success (2xx/3xx)</SelectItem>
+                    <SelectItem value="denied">Denied (401/403)</SelectItem>
+                    <SelectItem value="error">Error (4xx/5xx)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          ) : (
+            <div className="md:col-span-2">
+              <label className="text-xs text-muted-foreground mb-1 block">
+                Entity ID / Actor / Action Search
+              </label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="e.g. CLM-2026-001, STAFF_CREATED"
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="col-span-2 md:col-span-6 flex items-center gap-2 pt-1">
+            <Button onClick={applyFilters} className="gap-1.5">
+              <Search className="w-4 h-4" /> Search
+            </Button>
+            <Button
+              variant="outline"
+              onClick={resetFilters}
+              className="gap-1.5"
+            >
+              <X className="w-4 h-4" /> Reset
+            </Button>
+            {hasActiveFilters && (
+              <Badge variant="secondary" className="text-[10px]">
+                Filters active
+              </Badge>
+            )}
+            <div className="ml-auto">
+              {canExportAudit(role) && (
+                <ExportButton
+                  onExport={exportRows}
+                  disabled={rows.length === 0}
+                />
+              )}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {loading ? (
+        <div className="flex items-center justify-center h-48">
+          <div className="w-6 h-6 border-4 border-primary/20 border-t-primary rounded-full animate-spin" />
+        </div>
+      ) : (
+        <Card className="border-0 shadow-sm">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                {tab === "data" ? (
+                  <TableRow>
+                    <TableHead className="text-xs">
+                      <SortHeader
+                        label="When"
+                        field="createdAt"
+                        sortField={sortField}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                    </TableHead>
+                    <TableHead className="text-xs">Actor</TableHead>
+                    <TableHead className="text-xs">Role</TableHead>
+                    <TableHead className="text-xs">Action</TableHead>
+                    <TableHead className="text-xs">Entity Type</TableHead>
+                    <TableHead className="text-xs">Entity ID</TableHead>
+                    <TableHead className="text-xs">Fields Changed</TableHead>
+                    <TableHead className="text-xs w-16">Details</TableHead>
+                  </TableRow>
+                ) : (
+                  <TableRow>
+                    <TableHead className="text-xs">
+                      <SortHeader
+                        label="When"
+                        field="createdAt"
+                        sortField={sortField}
+                        sortDir={sortDir}
+                        onSort={handleSort}
+                      />
+                    </TableHead>
+                    <TableHead className="text-xs">Actor</TableHead>
+                    <TableHead className="text-xs">Method</TableHead>
+                    <TableHead className="text-xs">Path</TableHead>
+                    <TableHead className="text-xs">Action</TableHead>
+                    <TableHead className="text-xs">Status</TableHead>
+                    <TableHead className="text-xs">IP</TableHead>
+                    <TableHead className="text-xs w-16">Details</TableHead>
+                  </TableRow>
+                )}
+              </TableHeader>
+              <TableBody>
+                {rows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-12">
+                      <ShieldCheck className="w-8 h-8 text-muted-foreground/30 mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">
+                        No {tab === "access" ? "access" : "audit"} records
+                        found.
+                      </p>
+                    </TableCell>
+                  </TableRow>
+                ) : tab === "data" ? (
+                  rows.map((r) => (
+                    <TableRow key={r.id} className="hover:bg-muted/40">
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {moment(r.createdAt).format("DD MMM YYYY, HH:mm:ss")}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {r.actorName || r.actorId || "—"}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {r.actorRole || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          className={`text-[10px] ${actionTone(r.action)}`}
+                        >
+                          {r.action}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {r.entityType || "—"}
+                      </TableCell>
+                      <TableCell
+                        className="text-xs font-mono max-w-[140px] truncate"
+                        title={r.entityId}
+                      >
+                        {r.entityId || "—"}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        {r.changes ? Object.keys(r.changes).join(", ") : "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => setDetail(r)}
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                ) : (
+                  rows.map((r) => (
+                    <TableRow key={r.id} className="hover:bg-muted/40">
+                      <TableCell className="text-xs whitespace-nowrap">
+                        {moment(r.createdAt).format("DD MMM YYYY, HH:mm:ss")}
+                      </TableCell>
+                      <TableCell className="text-xs">
+                        <div className="font-medium">
+                          {r.actorName || r.actorId || "—"}
+                        </div>
+                        <div className="text-[10px] text-muted-foreground">
+                          {r.actorRole || "—"}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          className={`text-[10px] font-mono ${methodTone(r.method)}`}
+                        >
+                          {r.method}
+                        </Badge>
+                      </TableCell>
+                      <TableCell
+                        className="text-xs font-mono max-w-[220px] truncate"
+                        title={r.path}
+                      >
+                        {r.path}
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          className={`text-[10px] ${actionTone(r.action)}`}
+                        >
+                          {r.action?.replace(/_/g, " ")}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <Badge
+                          className={`text-[10px] font-mono ${statusTone(r.statusCode)}`}
+                        >
+                          {r.statusCode}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-xs font-mono text-muted-foreground">
+                        {r.ip || "—"}
+                      </TableCell>
+                      <TableCell>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7"
+                          onClick={() => setDetail(r)}
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="flex items-center justify-between p-3 border-t">
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Clock className="w-3 h-3" /> {total} record
+              {total === 1 ? "" : "s"} · Page {page} of {pages}
+            </span>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page <= 1}
+                onClick={() => setPage((p) => p - 1)}
+              >
+                Previous
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={page >= pages}
+                onClick={() => setPage((p) => p + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      <Sheet open={!!detail} onOpenChange={() => setDetail(null)}>
+        <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+          <SheetHeader>
+            <SheetTitle>
+              {tab === "access" ? "Access Event Detail" : "Audit Event Detail"}
+            </SheetTitle>
+          </SheetHeader>
+          {detail && (
+            <div className="space-y-3 mt-4 text-sm">
+              <DetailRow
+                label="Timestamp"
+                value={moment(detail.createdAt).format("DD MMM YYYY, HH:mm:ss")}
+              />
+              {tab === "access" ? (
+                <>
+                  <DetailRow label="Request ID" value={detail.requestId} mono />
+                  <DetailRow
+                    label="Actor"
+                    value={
+                      detail.actorEmail || detail.actorName || detail.actorId
+                    }
+                  />
+                  <DetailRow label="Role" value={detail.actorRole} />
+                  <DetailRow label="Method" value={detail.method} mono />
+                  <DetailRow label="Path" value={detail.path} mono />
+                  <DetailRow
+                    label="Action"
+                    value={detail.action?.replace(/_/g, " ")}
+                  />
+                  <DetailRow
+                    label="Status Code"
+                    value={detail.statusCode}
+                    mono
+                  />
+                  <DetailRow
+                    label="Duration"
+                    value={
+                      detail.durationMs != null
+                        ? `${detail.durationMs} ms`
+                        : null
+                    }
+                  />
+                  <DetailRow
+                    label="Claim Reference"
+                    value={detail.claimId}
+                    mono
+                  />
+                  <DetailRow label="IP Address" value={detail.ip} mono />
+                  <DetailRow label="User Agent" value={detail.userAgent} />
+                </>
+              ) : (
+                <>
+                  <DetailRow
+                    label="Actor"
+                    value={detail.actorName || detail.actorId}
+                  />
+                  <DetailRow label="Role" value={detail.actorRole} />
+                  <DetailRow label="Action" value={detail.action} mono />
+                  <DetailRow label="Entity Type" value={detail.entityType} />
+                  <DetailRow label="Entity ID" value={detail.entityId} mono />
+                  {detail.changes && (
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground mb-1">
+                        Changes
+                      </p>
+                      <pre className="text-[10px] bg-muted p-2 rounded-md overflow-x-auto">
+                        {JSON.stringify(detail.changes, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
 
-function LoadingBox() {
-  return <div className="text-sm text-gray-400 py-6 text-center">Loading…</div>;
-}
-
-function ActionBadge({ action }) {
-  const colors = {
-    CREATE: "bg-green-100 text-green-700",
-    UPDATE: "bg-blue-100 text-blue-700",
-    DELETE: "bg-red-100 text-red-700",
-    LOGIN_SUCCESS: "bg-green-100 text-green-700",
-    LOGIN_FAILED: "bg-red-100 text-red-700",
-    LOGOUT: "bg-gray-100 text-gray-700",
-    VIEW_CLAIM: "bg-purple-100 text-purple-700",
-    EXPORT: "bg-amber-100 text-amber-700",
-    API_CALL: "bg-gray-100 text-gray-700",
-  };
+function DetailRow({ label, value, mono = false }) {
+  if (value === null || value === undefined || value === "") return null;
   return (
-    <span
-      className={`px-2 py-0.5 rounded text-xs font-medium ${colors[action] || "bg-gray-100 text-gray-700"}`}
-    >
-      {action}
-    </span>
+    <div className="flex justify-between gap-4 py-1.5 border-b border-border/50">
+      <span className="text-xs text-muted-foreground shrink-0">{label}</span>
+      <span
+        className={`text-xs font-medium text-right break-all ${mono ? "font-mono" : ""}`}
+      >
+        {value}
+      </span>
+    </div>
   );
-}
-
-function ChangesTable({ changes, compact }) {
-  return (
-    <table
-      className={`border-collapse ${compact ? "text-xs" : "text-sm"} w-full max-w-xl`}
-    >
-      <thead>
-        <tr className="text-left text-gray-400">
-          <th className="pr-4 py-1">Field</th>
-          <th className="pr-4 py-1">Old</th>
-          <th className="pr-4 py-1">New</th>
-        </tr>
-      </thead>
-      <tbody>
-        {Object.entries(changes).map(
-          ([field, { old: oldVal, new: newVal }]) => (
-            <tr key={field} className="border-t border-gray-100">
-              <td className="pr-4 py-1 font-medium text-gray-700">{field}</td>
-              <td className="pr-4 py-1 text-red-600">{formatValue(oldVal)}</td>
-              <td className="pr-4 py-1 text-green-600">
-                {formatValue(newVal)}
-              </td>
-            </tr>
-          ),
-        )}
-      </tbody>
-    </table>
-  );
-}
-
-function formatValue(v) {
-  if (v === null || v === undefined) return "—";
-  if (typeof v === "object") return JSON.stringify(v);
-  return String(v);
-}
-
-function formatDate(d) {
-  if (!d) return "—";
-  return new Date(d).toLocaleString();
 }

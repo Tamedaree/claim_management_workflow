@@ -7,6 +7,12 @@ function normalizeIp(ip) {
   return ip;
 }
 
+function parsePagination(req) {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 50));
+  return { page, limit, skip: (page - 1) * limit };
+}
+
 export async function getClaimAuditTimeline(req, res) {
   const claimIdentifier = req.params.id?.trim();
 
@@ -91,45 +97,119 @@ export async function getClaimAuditTimeline(req, res) {
   }
 }
 
+// @desc    Business/data-change audit log — filtered, paginated
+// @route   GET /api/audit/data-changes
 export async function getDataAuditLogs(req, res) {
-  const { entityType, entityId, actorId, from, to } = req.query;
+  const { entityType, entityId, actorId, action, search, from, to } = req.query;
+  const { page, limit, skip } = parsePagination(req);
+
   try {
-    const logs = await prisma.dataAuditLog.findMany({
-      where: {
-        entityType: entityType || undefined,
-        entityId: entityId || undefined,
-        actorId: actorId || undefined,
-        createdAt: {
-          gte: from ? new Date(from) : undefined,
-          lte: to ? new Date(to) : undefined,
-        },
+    const where = {
+      entityType: entityType || undefined,
+      entityId: entityId || undefined,
+      actorId: actorId || undefined,
+      action: action || undefined,
+      createdAt: {
+        gte: from ? new Date(from) : undefined,
+        lte: to ? new Date(to) : undefined,
       },
-      orderBy: { createdAt: "desc" },
-      take: 200,
+    };
+
+    if (search) {
+      where.OR = [
+        { entityId: { contains: search, mode: "insensitive" } },
+        { action: { contains: search, mode: "insensitive" } },
+        { actorName: { contains: search, mode: "insensitive" } },
+        { entityType: { contains: search, mode: "insensitive" } },
+      ];
+    }
+
+    if (req.user.role !== "admin") {
+      if (!entityType) {
+        where.entityType = "Claim";
+      } else if (entityType !== "Claim") {
+        return res.status(403).json({
+          success: false,
+          error: "Only claim data changes are available for your role",
+        });
+      }
+    }
+
+    const [logs, total] = await Promise.all([
+      prisma.dataAuditLog.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip,
+        take: limit,
+      }),
+      prisma.dataAuditLog.count({ where }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: logs,
+      total,
+      page,
+      pages: Math.max(1, Math.ceil(total / limit)),
     });
-    return res.json(logs);
   } catch (err) {
     console.error("[auditController] getDataAuditLogs failed:", err);
     return res.status(500).json({ error: "Failed to load data audit logs" });
   }
 }
 
+// @desc    Access / API request log — filtered, paginated
+// @route   GET /api/audit/access-logs
 export async function getAccessLogs(req, res) {
-  const { actorId, path, action, from, to } = req.query;
+  const { actorId, method, action, status, search, from, to } = req.query;
+  const { page, limit, skip } = parsePagination(req);
+
   try {
-    const logs = await prisma.accessLog.findMany({
-      where: {
-        actorId: actorId || undefined,
-        path: path || undefined,
-        action: action || undefined,
-        createdAt: {
-          gte: from ? new Date(from) : undefined,
-          lte: to ? new Date(to) : undefined,
-        },
+    const where = {
+      actorId: actorId || undefined,
+      method: method || undefined,
+      action: action || undefined,
+      createdAt: {
+        gte: from ? new Date(from) : undefined,
+        lte: to ? new Date(to) : undefined,
       },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: 200,
-    });
+    };
+
+    if (status === "success") {
+      where.statusCode = { gte: 200, lt: 400 };
+    } else if (status === "denied") {
+      where.statusCode = { in: [401, 403] };
+    } else if (status === "error") {
+      where.statusCode = { gte: 400 };
+    }
+
+    if (search) {
+      where.path = { contains: search, mode: "insensitive" };
+    }
+
+    if (req.user.role !== "admin") {
+      if (!req.query.action) {
+        where.action = {
+          in: [
+            "LOGIN_SUCCESS",
+            "LOGIN_FAILED",
+            "LOGOUT",
+            "VIEW_CLAIM",
+            "EXPORT",
+          ],
+        };
+      }
+    }
+
+    const [logs, total] = await Promise.all([
+      prisma.accessLog.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip,
+        take: limit,
+      }),
+      prisma.accessLog.count({ where }),
+    ]);
 
     const actorIds = [
       ...new Set(logs.map((log) => log.actorId).filter(Boolean)),
@@ -154,19 +234,44 @@ export async function getAccessLogs(req, res) {
       : [];
     const staffByEmail = new Map(staff.map((member) => [member.email, member]));
 
-    return res.json(
-      logs.map((log) => {
-        const user = userById.get(log.actorId);
-        const member = user && staffByEmail.get(user.email);
-        const actorName = member
-          ? [member.first_name, member.middle_name, member.last_name]
-              .filter(Boolean)
-              .join(" ")
-          : user?.email || null;
+    let data = logs.map((log) => {
+      const user = userById.get(log.actorId);
+      const member = user && staffByEmail.get(user.email);
+      const actorName = member
+        ? [member.first_name, member.middle_name, member.last_name]
+            .filter(Boolean)
+            .join(" ")
+        : user?.email || null;
 
-        return { ...log, actorName, ip: normalizeIp(log.ip) };
-      }),
-    );
+      return {
+        ...log,
+        actorName,
+        actorEmail: user?.email || null,
+        ip: normalizeIp(log.ip),
+      };
+    });
+
+    // Search by actor name/email happens after the join, since the DB
+    // query can't filter on a computed field — acceptable at current
+    // scale (limit is capped at 200/page), revisit with a raw query
+    // or a denormalized actorEmail column on AccessLog if volume grows.
+    if (search) {
+      const s = search.toLowerCase();
+      data = data.filter(
+        (d) =>
+          d.path?.toLowerCase().includes(s) ||
+          d.actorName?.toLowerCase().includes(s) ||
+          d.actorEmail?.toLowerCase().includes(s),
+      );
+    }
+
+    return res.json({
+      success: true,
+      data,
+      total,
+      page,
+      pages: Math.max(1, Math.ceil(total / limit)),
+    });
   } catch (err) {
     console.error("[auditController] getAccessLogs failed:", err);
     return res.status(500).json({ error: "Failed to load access logs" });

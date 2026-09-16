@@ -4,10 +4,11 @@ export const ROLE_LABELS = {
   admin: "System Administrator",
   ceo: "Chief Executive Officer",
   chief_of_gio: "Chief of GIO (Deputy CEO)",
+  senior_director: "Senior Director (GIO)",
   director: "Director (Shared: GIO & Claim Division)",
   gio_claim_manager: "GIO Claim Manager",
   claim_manager: "Claim Manager",
-  gio_claim_adjuster: "GIO Claim Adjuster",
+  gio_principal_claim_officer: "GIO Claim Principal",
   principal_claim_officer: "Principal of Claim",
   claim_adjuster: "Claim Adjuster",
   surveyor: "Surveyor",
@@ -18,11 +19,12 @@ export const ROLE_HIERARCHY = [
   "secretary",
   "surveyor",
   "claim_adjuster",
-  "gio_claim_adjuster",
+  "gio_principal_claim_officer",
   "principal_claim_officer",
   "claim_manager",
   "gio_claim_manager",
   "director",
+  "senior_director",
   "chief_of_gio",
   "ceo",
 ];
@@ -32,6 +34,7 @@ export const APPROVAL_ROLES = [
   "claim_manager",
   "gio_claim_manager",
   "director",
+  "senior_director",
   "chief_of_gio",
   "ceo",
 ];
@@ -40,7 +43,9 @@ export const APPROVER_ROLE_MAP = {
   "Principal of Claim": "principal_claim_officer",
   "Claim Manager": "claim_manager",
   "GIO Claim Manager": "gio_claim_manager",
+  "GIO Claim Principal": "gio_principal_claim_officer",
   Director: "director",
+  "Senior Director": "senior_director",
   "Chief of GIO": "chief_of_gio",
   CEO: "ceo",
 };
@@ -49,7 +54,9 @@ export const ROLE_TO_APPROVER_LABEL = {
   principal_claim_officer: "Principal of Claim",
   claim_manager: "Claim Manager",
   gio_claim_manager: "GIO Claim Manager",
+  gio_principal_claim_officer: "GIO Claim Principal",
   director: "Director",
+  senior_director: "Senior Director",
   chief_of_gio: "Chief of GIO",
   ceo: "CEO",
 };
@@ -70,10 +77,10 @@ export const CLAIM_DIVISION_APPROVAL_TIER = [
 export const GIO_APPROVAL_TIER = [
   { stage_name: "GIO Claim Manager Review", role: "gio_claim_manager" },
   { stage_name: "Director Decision", role: "director" },
+  { stage_name: "Senior Director Decision", role: "senior_director" },
   { stage_name: "Chief of GIO Approval", role: "chief_of_gio" },
   { stage_name: "CEO Decision", role: "ceo" },
 ];
-
 export function findTierEntry(tierList, stageName) {
   const n = normalizeStageName(stageName);
   return tierList.find((t) => normalizeStageName(t.stage_name) === n);
@@ -136,17 +143,17 @@ export const CLAIM_DIVISION_STATUS_COLORS = {
 // GIO case status → color/badge tone
 export const GIO_STATUS_COLORS = {
   Case_Received: "bg-gray-100 text-gray-700",
-  Submitted: "bg-blue-100 text-blue-700",
   Pending_GIO_Assignment: "bg-amber-100 text-amber-700",
-  Assigned_to_GIO_Claim_Adjuster: "bg-blue-100 text-blue-700",
+  Director_Assignment_Pending: "bg-amber-100 text-amber-700",
+  Manager_Assignment_Pending: "bg-amber-100 text-amber-700",
+  Assigned_to_GIO_Principal: "bg-blue-100 text-blue-700",
   Document_Review_Pending: "bg-amber-100 text-amber-700",
   GIO_Review_In_Progress: "bg-blue-100 text-blue-700",
   Claim_Manager_Review_Pending: "bg-amber-100 text-amber-700",
   Director_Decision_Pending: "bg-amber-100 text-amber-700",
+  Senior_Director_Decision_Pending: "bg-amber-100 text-amber-700",
   Chief_of_GIO_Approval_Pending: "bg-amber-100 text-amber-700",
   CEO_Approval_Pending: "bg-amber-100 text-amber-700",
-  Approved: "bg-emerald-100 text-emerald-700",
-  Rejected: "bg-red-100 text-red-700",
   Returned_to_Originating_Office: "bg-orange-100 text-orange-700",
   Completed: "bg-emerald-100 text-emerald-700",
   Closed: "bg-emerald-100 text-emerald-700",
@@ -277,18 +284,17 @@ export const FORWARDING_OFFICE_TYPES = [
   "Service Center",
   "District Office",
   "Kefla Ager Branch",
-  "Border Branch",
 ]; // display-only
 
 export const ORIGINATING_OFFICE_TYPE_OPTIONS = [
   { value: "Service_Center", label: "Service Center" },
   { value: "District_Office", label: "District Office" },
   { value: "Kefla_Ager_Branch", label: "Kefla Ager Branch" },
-  { value: "Border_Branch", label: "Border Branch" },
   { value: "Head_Office", label: "Head Office" },
 ];
 
 // Kefla Ager (border-area) branches — remote/border-area branches forwarding claims to Head Office
+// Kefla Ager / remote & border-area branches (unique, full set)
 export const KEFLA_AGER_BRANCHES = [
   "Humera Branch",
   "Gambella Branch",
@@ -302,16 +308,6 @@ export const KEFLA_AGER_BRANCHES = [
   "Gimbi Branch",
   "Denbidollo Branch",
   "Gelemso Branch",
-];
-
-// Border branches — branches at or near border crossings
-export const BORDER_BRANCHES = [
-  "Humera Branch",
-  "Gambella Branch",
-  "Jigjiga Branch",
-  "Asosa Branch",
-  "Semera Branch",
-  "Chero Branch",
   "Harrar Branch",
   "Moyale Branch",
 ];
@@ -345,7 +341,7 @@ export function canApproveClaims(role) {
     "claim_manager",
     "gio_claim_manager",
     "director",
-    "gio",
+    "senior_director",
     "chief_of_gio",
     "ceo",
     "admin",
@@ -396,19 +392,50 @@ export function canViewAllClaims(role) {
 }
 
 export function canRegisterGioCases(role) {
-  return ["secretary", "gio_claim_adjuster", "admin"].includes(role);
+  return ["secretary", "gio_principal_claim_officer", "admin"].includes(role);
+}
+
+export const AUDIT_FULL_ROLES = ["admin"];
+export const AUDIT_OVERSIGHT_ROLES = [
+  "ceo",
+  "chief_of_gio",
+  "senior_director",
+  "director",
+];
+
+export function canViewAudit(role) {
+  return [...AUDIT_FULL_ROLES, ...AUDIT_OVERSIGHT_ROLES].includes(role);
+}
+export function canExportAudit(role) {
+  return role === "admin";
+}
+export function isAuditAdmin(role) {
+  return role === "admin";
 }
 
 export function canActOnGioCases(role) {
   return [
     "secretary",
-    "gio_claim_adjuster",
+    "gio_principal_claim_officer",
     "gio_claim_manager",
     "director",
+    "senior_director",
     "chief_of_gio",
     "ceo",
     "admin",
   ].includes(role);
+}
+
+/** Higher GIO role may act on a stage owned by a lower role. */
+export function canActOnGioStage(actorRole, stageRole) {
+  if (!actorRole) return false;
+  if (actorRole === "admin") return true;
+  if (!stageRole) return false;
+  if (!canActOnGioCases(actorRole)) return false;
+  if (actorRole === stageRole) return true;
+  const a = ROLE_HIERARCHY.indexOf(actorRole);
+  const s = ROLE_HIERARCHY.indexOf(stageRole);
+  return a > -1 && s > -1 && a > s;
 }
 
 // Operational roles work on claim stages (register data, complete stages, flow to next role)
@@ -416,7 +443,7 @@ export const OPERATIONAL_ROLES = [
   "secretary",
   "surveyor",
   "claim_adjuster",
-  "gio_claim_adjuster",
+  "gio_principal_claim_officer",
   "claim_manager",
   "gio_claim_manager",
   "principal_claim_officer",
@@ -478,6 +505,7 @@ export const WORKFLOW_SCOPE_BY_ROLE = {
   admin: "all",
   secretary: "all",
   director: "all",
+  senior_director: "all",
   ceo: "all",
   surveyor: "Claim_Division",
   claim_adjuster: "Claim_Division",
@@ -500,11 +528,28 @@ export const CLAIM_DIVISION_ROLES = [
 /** Roles that appear on GIO workflow / audit filters */
 export const GIO_ROLES = [
   "secretary",
-  "gio_claim_adjuster",
+  "gio_principal_claim_officer",
   "gio_claim_manager",
-  "director", // shared
+  "director",
+  "senior_director",
   "chief_of_gio",
   "ceo",
+];
+
+export const MOTOR_VEHICLE_TYPES = [
+  "Electric",
+  "Conventional",
+  "Hybrid",
+  "Private Car",
+  "Commercial Vehicle",
+  "Truck",
+  "Pickup",
+  "Bus",
+  "Motorcycle",
+  "Taxi",
+  "Three-Wheeler",
+  "Special Purpose Vehicle",
+  "Other",
 ];
 
 /**
@@ -707,64 +752,70 @@ export const WORKFLOW_STAGES = [
 export const GIO_WORKFLOW_STAGES = [
   {
     stage_name: "GIO Case Registration",
-    stage_label: "Registration",
     stage_order: 1,
     responsible_role: "secretary",
     department: "GIO",
-    description: "Secretary registers the GIO case and assigns Chief of GIO",
+    description: "Secretary registers the GIO case",
   },
   {
-    stage_name: "Chief of GIO Decision",
-    stage_label: "Chief of GIO",
+    stage_name: "Director Assignment",
     stage_order: 2,
-    responsible_role: "chief_of_gio",
+    responsible_role: "director",
     department: "GIO",
-    description: "Chief of GIO first review / direction after registration",
+    description: "Director assigns GIO Claim Manager",
   },
   {
-    stage_name: "GIO Claim Adjuster Review",
-    stage_label: "Adjuster",
+    stage_name: "Manager Assignment",
     stage_order: 3,
-    responsible_role: "gio_claim_adjuster",
+    responsible_role: "gio_claim_manager",
     department: "GIO",
-    description: "GIO Claim Adjuster works the case as directed",
+    description: "Manager assigns GIO Claim Principal",
+  },
+  {
+    stage_name: "GIO Case Work",
+    stage_order: 4,
+    responsible_role: "gio_principal_claim_officer",
+    department: "GIO",
+    description: "GIO Claim Principal works the case",
   },
   {
     stage_name: "GIO Claim Manager Review",
-    stage_label: "Manager",
-    stage_order: 4,
+    stage_order: 5,
     responsible_role: "gio_claim_manager",
     department: "GIO",
-    description: "GIO Claim Manager review before Director",
+    description: "Manager may finalize within authority or forward",
   },
   {
     stage_name: "Director Decision",
-    stage_label: "Director",
-    stage_order: 5,
+    stage_order: 6,
     responsible_role: "director",
     department: "GIO",
-    description: "Director decision within delegated authority",
+    description: "Director may finalize or forward",
+  },
+  {
+    stage_name: "Senior Director Decision",
+    stage_order: 7,
+    responsible_role: "senior_director",
+    department: "GIO",
+    description: "Senior Director may finalize or forward",
   },
   {
     stage_name: "Chief of GIO Approval",
-    stage_label: "Chief approval",
-    stage_order: 6,
+    stage_order: 8,
     responsible_role: "chief_of_gio",
     department: "GIO",
-    description: "Chief of GIO second decision / final approval after Director",
+    description: "Chief of GIO may finalize or forward",
   },
   {
     stage_name: "CEO Decision",
-    stage_label: "CEO",
-    stage_order: 7,
+    stage_order: 9,
     responsible_role: "ceo",
     department: "GIO",
-    description: "CEO decision when required by amount or case type",
+    description: "CEO decision when required",
   },
   {
     stage_name: "GIO Case Closure",
-    stage_label: "Closed",
-    stage_order: 8,
+    stage_order: 10,
     responsible_role: "secretary",
     department: "GIO",
     description: "Secretary closes the case",
@@ -867,7 +918,6 @@ export const FORWARDING_OFFICES = {
   "Service Center": SERVICE_CENTERS,
   "District Office": DISTRICT_OFFICES,
   "Kefla Ager Branch": KEFLA_AGER_BRANCHES,
-  "Border Branch": BORDER_BRANCHES,
 };
 
 // Delegation of Authority limits (ETB) by role and class — per EIC delegation matrix

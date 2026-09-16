@@ -7,7 +7,7 @@ import {
   FileText,
   Clock,
   CheckCircle2,
-  XCircle,
+  Loader2,
   ClipboardCheck,
   AlertTriangle,
   TrendingUp,
@@ -17,9 +17,11 @@ import {
   formatCurrency,
   ROLE_LABELS,
   ROLE_TO_APPROVER_LABEL,
+  APPROVER_ROLE_MAP,
   CLAIM_DIVISION_STATUS_LIST,
   GIO_STATUS_LIST,
   INSURANCE_TYPES,
+  getWorkflowScopeForRole,
 } from "@/lib/roleConfig";
 import {
   BarChart,
@@ -43,26 +45,101 @@ const PIE_COLORS = [
   "#8b5cf6",
 ];
 
-const GIO_ROLES = new Set([
-  "gio_claim_adjuster",
-  "gio_claim_manager",
-  "chief_of_gio",
+const COMPLETED_STATUSES = new Set([
+  "Approved",
+  "Completed",
+  "Claim_Closed",
+  "Closed",
+  "Payment_Completed",
+  "Payment_Document_Approved",
+  "Forwarded_to_Finance",
 ]);
 
-const CLAIM_DIVISION_ROLES = new Set([
-  "secretary",
-  "claim_adjuster",
-  "surveyor",
-  "principal_claim_officer",
-  "claim_manager",
+const EXCLUDED_FROM_IN_PROGRESS = new Set([
+  "Draft",
+  "Rejected",
+  ...COMPLETED_STATUSES,
 ]);
 
-/** director / admin / ceo → both */
+const DONE_FOR_PENDING = new Set(["Draft", "Rejected", ...COMPLETED_STATUSES]);
+
+function isGio(claim) {
+  return claim?.workflow_type === "GIO_Approval";
+}
+
+function isClaimDivision(claim) {
+  return !isGio(claim);
+}
+
+function splitCdGio(list) {
+  return {
+    cd: list.filter(isClaimDivision).length,
+    gio: list.filter(isGio).length,
+  };
+}
+
+function isAssignedToMe(claim, user) {
+  if (!user?.id || !claim) return false;
+
+  if (claim.current_approver_id === user.id) return true;
+  if (claim.current_owner_id === user.id) return true;
+
+  const role = user.role;
+  const myLabel = ROLE_TO_APPROVER_LABEL?.[role];
+  const mapped = APPROVER_ROLE_MAP?.[claim.current_approver_role];
+
+  if (claim.current_approver_role === role) return true;
+  if (myLabel && claim.current_approver_role === myLabel) return true;
+  if (mapped === role) return true;
+
+  return false;
+}
+
+function isCompletedClaim(claim) {
+  if (!claim) return false;
+  if (COMPLETED_STATUSES.has(claim.status)) return true;
+  const stage = (claim.workflow_stage || "").trim();
+  if (stage === "Claim Closed" || stage === "GIO Case Closure") return true;
+  return false;
+}
+
+function isInProgressClaim(claim) {
+  if (!claim) return false;
+  if (isCompletedClaim(claim)) return false;
+  if (EXCLUDED_FROM_IN_PROGRESS.has(claim.status)) return false;
+  return Boolean(claim.status || claim.workflow_stage);
+}
+
 function resolveScope(role) {
-  if (role === "director" || role === "admin" || role === "ceo") return "all";
-  if (GIO_ROLES.has(role)) return "GIO_Approval";
-  if (CLAIM_DIVISION_ROLES.has(role)) return "Claim_Division";
+  const fromConfig = getWorkflowScopeForRole?.(role);
+  if (
+    fromConfig === "GIO_Approval" ||
+    fromConfig === "Claim_Division" ||
+    fromConfig === "all"
+  ) {
+    return fromConfig;
+  }
   return "all";
+}
+
+/** Shared footer: Claim Division + GIO counts when director/admin/ceo */
+function CdGioBreakdown({ list, show }) {
+  if (!show) return null;
+  const { cd, gio } = splitCdGio(list);
+  return (
+    <div className="mt-3 pt-3 border-t flex flex-col gap-1.5 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground">Claim Division</span>
+        <span className="font-semibold tabular-nums">{cd}</span>
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground">GIO</span>
+        <span className="font-semibold tabular-nums text-purple-700">
+          {gio}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 export default function ApproverDashboard() {
@@ -72,11 +149,14 @@ export default function ApproverDashboard() {
   const [now, setNow] = useState(null);
 
   const scope = useMemo(() => resolveScope(user?.role), [user?.role]);
+  const showSplit = scope === "all";
 
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
+      await Promise.resolve();
+      if (cancelled) return;
       setLoading(true);
       try {
         const q =
@@ -108,9 +188,7 @@ export default function ApproverDashboard() {
   }, [scope]);
 
   const statusList = useMemo(() => {
-    if (scope === "GIO_Approval") {
-      return GIO_STATUS_LIST || [];
-    }
+    if (scope === "GIO_Approval") return GIO_STATUS_LIST || [];
     if (scope === "Claim_Division") {
       return ["Draft", ...(CLAIM_DIVISION_STATUS_LIST || [])];
     }
@@ -123,6 +201,35 @@ export default function ApproverDashboard() {
     ];
   }, [scope]);
 
+  const myPending = useMemo(() => {
+    if (!user) return [];
+    return claims.filter(
+      (c) =>
+        isAssignedToMe(c, user) &&
+        !DONE_FOR_PENDING.has(c.status) &&
+        !isCompletedClaim(c),
+    );
+  }, [claims, user]);
+
+  const aging = useMemo(() => {
+    return myPending.filter((c) => {
+      const dateVal = c.submission_date || c.createdAt || c.created_date;
+      if (!dateVal || !now) return false;
+      const days = (now - new Date(dateVal).getTime()) / 86400000;
+      return days > 3;
+    });
+  }, [myPending, now]);
+
+  const completedClaims = useMemo(
+    () => claims.filter((c) => isCompletedClaim(c)),
+    [claims],
+  );
+
+  const inProgressClaims = useMemo(
+    () => claims.filter((c) => isInProgressClaim(c)),
+    [claims],
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -131,61 +238,18 @@ export default function ApproverDashboard() {
     );
   }
 
-  const myApproverLabel = ROLE_TO_APPROVER_LABEL[user?.role];
-
-  const myPending = claims.filter((c) => {
-    const isMine =
-      c.current_approver_role === myApproverLabel ||
-      c.current_approver_role === user?.role ||
-      c.current_approver_id === user?.id ||
-      c.current_owner_id === user?.id;
-
-    if (!isMine) return false;
-
-    const done = [
-      "Approved",
-      "Rejected",
-      "Closed",
-      "Claim_Closed",
-      "Completed",
-    ];
-    if (done.includes(c.status)) return false;
-
-    const pendingStatuses = [
-      "Submitted",
-      "Under_Review",
-      "Escalated",
-      "Principal_Review_Pending",
-      "Claim_Manager_Review_Pending",
-      "Director_Decision_Pending",
-      "Chief_of_GIO_Approval_Pending",
-      "CEO_Approval_Pending",
-      "Notification_Received",
-      "Claim_Registered",
-      "Pending_Assignment",
-      "Assigned_to_Principal_of_Claim",
-      "Assigned_to_Claim_Adjuster",
-      "Case_Received",
-      "Pending_GIO_Assignment",
-      "Assigned_to_GIO_Claim_Adjuster",
-      "Document_Review_Pending",
-      "GIO_Review_In_Progress",
-    ];
-
-    return pendingStatuses.includes(c.status) || Boolean(c.workflow_stage);
-  });
-
-  const aging = myPending.filter((c) => {
-    const dateVal = c.submission_date || c.createdAt || c.created_date;
-    if (!dateVal || !now) return false;
-    const days = (now - new Date(dateVal).getTime()) / 86400000;
-    return days > 3;
-  });
-
   const allClaims = claims;
-  const approved = allClaims.filter((c) => c.status === "Approved");
-  const rejected = allClaims.filter((c) => c.status === "Rejected");
+  const claimDivisionClaims = allClaims.filter(isClaimDivision);
+  const gioClaims = allClaims.filter(isGio);
   const totalAmount = allClaims.reduce(
+    (sum, c) => sum + (c.claim_amount || 0),
+    0,
+  );
+  const claimDivisionAmount = claimDivisionClaims.reduce(
+    (sum, c) => sum + (c.claim_amount || 0),
+    0,
+  );
+  const gioAmount = gioClaims.reduce(
     (sum, c) => sum + (c.claim_amount || 0),
     0,
   );
@@ -212,97 +276,151 @@ export default function ApproverDashboard() {
 
   return (
     <div className="space-y-6 max-w-7xl">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">
             {ROLE_LABELS[user?.role] || "Approver"} Dashboard
           </h1>
           <p className="text-muted-foreground text-sm mt-1">
-            {user?.full_name || "User"} ·{" "}
+            {user?.full_name || user?.email || "User"} ·{" "}
             {ROLE_LABELS[user?.role] || "Approver"} · {scopeLabel}
           </p>
         </div>
         <Link
-          to="/approvals"
+          to="/claims"
           className="inline-flex items-center gap-2 px-4 py-2.5 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 transition-colors"
         >
-          <ClipboardCheck className="w-4 h-4" /> Go to Approvals (
-          {myPending.length})
+          <ClipboardCheck className="w-4 h-4" />
+          My claims ({myPending.length})
         </Link>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        {[
-          {
-            label: "My Pending Actions",
-            value: myPending.length,
-            icon: ClipboardCheck,
-            color: "text-purple-600 bg-purple-50",
-          },
-          {
-            label: "Aging (>3 days)",
-            value: aging.length,
-            icon: AlertTriangle,
-            color: "text-red-600 bg-red-50",
-          },
-          {
-            label: "Total Claims",
-            value: allClaims.length,
-            icon: FileText,
-            color: "text-blue-600 bg-blue-50",
-          },
-          {
-            label: "Approved",
-            value: approved.length,
-            icon: CheckCircle2,
-            color: "text-emerald-600 bg-emerald-50",
-          },
-          {
-            label: "Rejected",
-            value: rejected.length,
-            icon: XCircle,
-            color: "text-red-600 bg-red-50",
-          },
-        ].map((s) => (
-          <Card key={s.label} className="border-0 shadow-sm">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-3">
-                <div
-                  className={`w-10 h-10 rounded-xl flex items-center justify-center ${s.color}`}
-                >
-                  <s.icon className="w-5 h-5" />
-                </div>
+        {/* My Pending Actions */}
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-purple-600 bg-purple-50">
+                <ClipboardCheck className="w-5 h-5" />
               </div>
-              <p className="text-2xl font-bold">{s.value}</p>
-              <p className="text-xs text-muted-foreground mt-1">{s.label}</p>
-            </CardContent>
-          </Card>
-        ))}
+            </div>
+            <p className="text-xs text-muted-foreground">My Pending Actions</p>
+            <p className="text-2xl font-bold mt-0.5">{myPending.length}</p>
+            <CdGioBreakdown list={myPending} show={showSplit} />
+          </CardContent>
+        </Card>
+
+        {/* Aging */}
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-red-600 bg-red-50">
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Aging (&gt;3 days)</p>
+            <p className="text-2xl font-bold mt-0.5">{aging.length}</p>
+            <CdGioBreakdown list={aging} show={showSplit} />
+          </CardContent>
+        </Card>
+
+        {/* Completed */}
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-emerald-600 bg-emerald-50">
+                <CheckCircle2 className="w-5 h-5" />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Completed</p>
+            <p className="text-2xl font-bold mt-0.5">
+              {completedClaims.length}
+            </p>
+            <CdGioBreakdown list={completedClaims} show={showSplit} />
+          </CardContent>
+        </Card>
+
+        {/* In Progress */}
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-blue-600 bg-blue-50">
+                <Loader2 className="w-5 h-5" />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">In Progress</p>
+            <p className="text-2xl font-bold mt-0.5">
+              {inProgressClaims.length}
+            </p>
+            <CdGioBreakdown list={inProgressClaims} show={showSplit} />
+          </CardContent>
+        </Card>
+
+        {/* Total claims */}
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-600 bg-slate-50">
+                <FileText className="w-5 h-5" />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">Total claims</p>
+            <p className="text-2xl font-bold mt-0.5">{allClaims.length}</p>
+            <CdGioBreakdown list={allClaims} show={showSplit} />
+          </CardContent>
+        </Card>
       </div>
 
-      <Card className="border-0 shadow-sm">
-        <CardContent className="p-5">
-          <div className="flex items-center gap-3 mb-1">
-            <TrendingUp className="w-5 h-5 text-blue-600" />
-            <span className="text-sm text-muted-foreground">
-              Total Claim Value
-            </span>
-          </div>
-          <p className="text-xl font-bold">{formatCurrency(totalAmount)}</p>
-        </CardContent>
-      </Card>
+      {showSplit ? (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-3 mb-1">
+                <TrendingUp className="w-5 h-5 text-slate-600" />
+                <span className="text-sm text-muted-foreground">
+                  Claim Division Value
+                </span>
+              </div>
+              <p className="text-xl font-bold">
+                {formatCurrency(claimDivisionAmount)}
+              </p>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm">
+            <CardContent className="p-5">
+              <div className="flex items-center gap-3 mb-1">
+                <TrendingUp className="w-5 h-5 text-purple-600" />
+                <span className="text-sm text-muted-foreground">GIO Value</span>
+              </div>
+              <p className="text-xl font-bold">{formatCurrency(gioAmount)}</p>
+            </CardContent>
+          </Card>
+        </div>
+      ) : (
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-5">
+            <div className="flex items-center gap-3 mb-1">
+              <TrendingUp className="w-5 h-5 text-blue-600" />
+              <span className="text-sm text-muted-foreground">
+                Total Claim Value
+              </span>
+            </div>
+            <p className="text-xl font-bold">{formatCurrency(totalAmount)}</p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card className="border-0 shadow-sm border-l-4 border-l-purple-500">
         <CardHeader className="pb-2">
           <CardTitle className="text-sm font-semibold">
-            Claims Awaiting Your Approval
+            Claims Awaiting Your Action
           </CardTitle>
         </CardHeader>
         <CardContent>
           {myPending.length > 0 ? (
             <div className="space-y-2">
               {myPending.slice(0, 5).map((claim) => {
-                const isGio = claim.workflow_type === "GIO_Approval";
+                const gio = isGio(claim);
                 return (
                   <Link
                     key={claim.id}
@@ -312,12 +430,12 @@ export default function ApproverDashboard() {
                     <div className="flex items-center gap-3">
                       <div
                         className={`w-9 h-9 rounded-lg flex items-center justify-center ${
-                          isGio ? "bg-purple-50" : "bg-blue-50"
+                          gio ? "bg-purple-50" : "bg-blue-50"
                         }`}
                       >
                         <Clock
                           className={`w-4 h-4 ${
-                            isGio ? "text-purple-600" : "text-blue-600"
+                            gio ? "text-purple-600" : "text-blue-600"
                           }`}
                         />
                       </div>
@@ -326,22 +444,25 @@ export default function ApproverDashboard() {
                           <p className="text-sm font-medium">
                             {claim.claim_reference}
                           </p>
-                          {scope === "all" && (
+                          {showSplit && (
                             <Badge
                               variant="secondary"
                               className={`text-[9px] ${
-                                isGio
+                                gio
                                   ? "bg-purple-100 text-purple-800"
                                   : "bg-slate-100 text-slate-700"
                               }`}
                             >
-                              {isGio ? "GIO" : "Claim Division"}
+                              {gio ? "GIO" : "Claim Division"}
                             </Badge>
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground">
                           {claim.claimant_name} · {claim.insurance_type} ·{" "}
                           {formatCurrency(claim.claim_amount)}
+                          {claim.workflow_stage
+                            ? ` · ${claim.workflow_stage}`
+                            : ""}
                         </p>
                       </div>
                     </div>
@@ -359,7 +480,7 @@ export default function ApproverDashboard() {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground text-center py-8">
-              No claims pending your approval
+              No claims pending your action
             </p>
           )}
         </CardContent>

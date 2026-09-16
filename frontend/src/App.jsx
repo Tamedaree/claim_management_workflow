@@ -29,11 +29,11 @@ import Dashboard from "@/pages/Dashboard";
 import ClaimRegister from "@/pages/ClaimRegister";
 import MyClaims from "@/pages/MyClaims";
 import ClaimDetail from "@/pages/ClaimDetail";
-import Approvals from "@/pages/Approvals";
 import AllClaims from "@/pages/AllClaims";
 import Notifications from "@/pages/Notifications";
 import Reports from "@/pages/Reports";
 import AuditTrail from "@/pages/AuditTrail";
+import SystemSettings from "@/pages/SystemSettings";
 import AdminUsers from "@/pages/AdminUsers";
 import AdminThresholds from "@/pages/AdminThresholds";
 import WorkflowConfig from "@/pages/WorkflowConfig";
@@ -98,10 +98,10 @@ const AuthenticatedApp = () => {
           />
           <Route path="/claims/:id" element={<ClaimDetail />} />
           <Route path="/claims" element={<MyClaims />} />
-          <Route path="/approvals" element={<Approvals />} />
           <Route path="/notifications" element={<Notifications />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/audit" element={<AuditTrail />} />
+          <Route path="/admin/system-settings" element={<SystemSettings />} />
           <Route path="/admin/users" element={<AdminUsers />} />
           <Route path="/admin/thresholds" element={<AdminThresholds />} />
           <Route path="/admin/workflow" element={<WorkflowConfig />} />

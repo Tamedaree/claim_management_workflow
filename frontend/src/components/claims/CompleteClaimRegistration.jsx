@@ -17,6 +17,7 @@ import { useToast } from "@/components/ui/use-toast";
 import { Save, ArrowLeft } from "lucide-react";
 import { MOTOR_COVER_TYPES } from "@/lib/roleConfig";
 import FileUploadSection from "@/components/claims/FileUploadSection";
+import ExistingClaimAlert from "@/components/claims/ExistingClaimAlert";
 
 export default function CompleteClaimRegistration() {
   const { id } = useParams();
@@ -27,6 +28,32 @@ export default function CompleteClaimRegistration() {
   const [saving, setSaving] = useState(false);
   const [files, setFiles] = useState([]);
   const [form, setForm] = useState(null);
+  const [claimNumberConflict, setClaimNumberConflict] = useState(null);
+  const [checkingClaimNo, setCheckingClaimNo] = useState(false);
+
+  const checkClaimNumber = async (value) => {
+    const v = String(value || "").trim();
+    if (!v) {
+      setClaimNumberConflict(null);
+      return null;
+    }
+
+    setCheckingClaimNo(true);
+    try {
+      const res = await api.get(
+        `/claims?claim_number=${encodeURIComponent(v)}&limit=5`,
+      );
+      const list = res.data?.data || [];
+      const other = list.find((c) => c.id !== id);
+      setClaimNumberConflict(other || null);
+      return other || null;
+    } catch {
+      setClaimNumberConflict(null);
+      return null;
+    } finally {
+      setCheckingClaimNo(false);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -35,6 +62,7 @@ export default function CompleteClaimRegistration() {
         const c = res.data.data || res.data;
         setForm({
           claim_reference: c.claim_reference || "",
+          claim_number: c.claim_number || "",
           claimant_name: c.claimant_name || "",
           insurance_type: c.insurance_type || "",
           plate_number: c.plate_number || "",
@@ -83,9 +111,19 @@ export default function CompleteClaimRegistration() {
       toast({
         title: "Missing fields",
         description:
-          "Policy number, amount, date of loss" +
+          "Policy number, claim number, amount, date of loss" +
           (form.insurance_type === "Motor" ? ", cover type" : "") +
           " are required.",
+        variant: "destructive",
+      });
+      return;
+    }
+    const conflict =
+      claimNumberConflict || (await checkClaimNumber(form.claim_number));
+    if (conflict) {
+      toast({
+        title: "Duplicate claim number",
+        description: `Already used on ${conflict.claim_reference}. Open that claim or use another number.`,
         variant: "destructive",
       });
       return;
@@ -95,6 +133,7 @@ export default function CompleteClaimRegistration() {
     try {
       await api.put(`/claims/${id}`, {
         policy_number: form.policy_number,
+        claim_number: form.claim_number || null,
         cover_type: form.insurance_type === "Motor" ? form.cover_type : null,
         plate_number: form.plate_number || null,
         claim_amount: parseFloat(form.claim_amount) || 0,
@@ -202,6 +241,14 @@ export default function CompleteClaimRegistration() {
         </CardContent>
       </Card>
 
+      {claimNumberConflict && (
+        <ExistingClaimAlert
+          claim={claimNumberConflict}
+          onView={() => navigate(`/claims/${claimNumberConflict.id}`)}
+          title="Claim number already exists"
+        />
+      )}
+
       {/* Adjuster completes */}
       <Card className="border-0 shadow-sm">
         <CardHeader>
@@ -215,6 +262,23 @@ export default function CompleteClaimRegistration() {
                 value={form.policy_number}
                 onChange={(e) => set("policy_number", e.target.value)}
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Claim number *</Label>
+              <Input
+                value={form.claim_number}
+                onChange={(e) => {
+                  set("claim_number", e.target.value);
+                  if (claimNumberConflict) setClaimNumberConflict(null);
+                }}
+                onBlur={(e) => checkClaimNumber(e.target.value)}
+                placeholder="e.g. INSIS / internal claim no."
+              />
+              {checkingClaimNo && (
+                <p className="text-[11px] text-muted-foreground">
+                  Checking claim number…
+                </p>
+              )}
             </div>
             {form.insurance_type === "Motor" && (
               <div className="space-y-1.5">
@@ -312,7 +376,11 @@ export default function CompleteClaimRegistration() {
         <Button variant="outline" onClick={() => navigate(`/claims/${id}`)}>
           Cancel
         </Button>
-        <Button onClick={handleSave} disabled={saving} className="gap-2">
+        <Button
+          onClick={handleSave}
+          disabled={saving || !!claimNumberConflict || checkingClaimNo}
+          className="gap-2"
+        >
           <Save className="w-4 h-4" />
           {saving ? "Saving..." : "Save full registration"}
         </Button>

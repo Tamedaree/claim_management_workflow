@@ -20,7 +20,7 @@ export default function Dashboard() {
     dashboard = <SecretaryDashboard />;
   } else if (role === "claim_adjuster") {
     dashboard = <ClaimAdjusterDashboard />;
-  } else if (role === "gio_claim_adjuster") {
+  } else if (role === "gio_principal_claim_officer") {
     dashboard = <GioClaimAdjusterDashboard />;
   } else if (role === "surveyor") {
     dashboard = <SurveyorDashboard />;
@@ -31,6 +31,7 @@ export default function Dashboard() {
       "claim_manager",
       "gio_claim_manager",
       "director",
+      "senior_director",
       "chief_of_gio",
       "ceo",
     ].includes(role)
