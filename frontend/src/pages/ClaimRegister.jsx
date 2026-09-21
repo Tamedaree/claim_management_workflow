@@ -4,11 +4,13 @@ import { Card, CardContent } from "@/components/ui/card";
 import { REGISTRATION_TYPES } from "@/lib/claimRegistration";
 import NewClaimNotificationForm from "@/components/claims/NewClaimNotificationForm";
 import NewGioCaseForm from "@/components/claims/NewGioCaseForm";
-import { FileText, Briefcase } from "lucide-react";
+import ClaimForApprovalForm from "@/components/claims/ClaimForApprovalForm";
+import { FileText, Briefcase, ShieldCheck } from "lucide-react";
 
 const TYPE_ICONS = {
   "New Claim Notification": FileText,
   "GIO Case": Briefcase,
+  "Claim for Approval": ShieldCheck,
 };
 
 export default function ClaimRegister() {
@@ -21,6 +23,8 @@ export default function ClaimRegister() {
     switch (registrationType) {
       case "GIO Case":
         return <NewGioCaseForm user={user} />;
+      case "Claim for Approval":
+        return <ClaimForApprovalForm user={user} />;
       default:
         return <NewClaimNotificationForm user={user} />;
     }
@@ -39,7 +43,7 @@ export default function ClaimRegister() {
 
       <Card className="border-0 shadow-sm">
         <CardContent className="pt-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {REGISTRATION_TYPES.map((t) => {
               const Icon = TYPE_ICONS[t.value] || FileText;
               const active = registrationType === t.value;
@@ -55,11 +59,7 @@ export default function ClaimRegister() {
                   }`}
                 >
                   <div
-                    className={`mt-0.5 p-2 rounded-md ${
-                      active
-                        ? "bg-primary text-primary-foreground"
-                        : "bg-muted text-muted-foreground"
-                    }`}
+                    className={`mt-0.5 p-2 rounded-md ${active ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
                   >
                     <Icon className="w-4 h-4" />
                   </div>

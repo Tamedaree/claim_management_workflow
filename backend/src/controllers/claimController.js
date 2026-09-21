@@ -565,6 +565,37 @@ export const updateClaim = async (req, res, next) => {
       }
     }
 
+    if (claim.status === "Rejected") {
+      const allowedWhileRejected = new Set([
+        "remarks", // optional
+      ]);
+      const keys = Object.keys(body).filter((k) => body[k] !== undefined);
+      const blocked = keys.filter((k) => !allowedWhileRejected.has(k));
+      if (blocked.length && req.user?.role !== "admin") {
+        throw new ApiError(
+          400,
+          "This claim is rejected. Workflow and data cannot be changed.",
+        );
+      }
+    }
+
+    if (body.status === "Rejected") {
+      const reason =
+        body.rejection_reason != null
+          ? String(body.rejection_reason).trim()
+          : claim.rejection_reason;
+      if (!reason) {
+        throw new ApiError(400, "rejection_reason is required when rejecting");
+      }
+      body.rejection_reason = reason;
+      if (!body.rejection_date) {
+        body.rejection_date = new Date();
+      }
+      body.current_approver_role = "None";
+      body.current_approver_id = null;
+      // Do NOT clear workflow_stage / activities — keep audit history
+    }
+
     const updatedClaim = await prisma.claim.update({
       where: { id: req.params.id },
       data: body,

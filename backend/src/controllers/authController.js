@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import prisma from "../config/db.js";
+import crypto from "crypto";
 import { generateToken } from "../utils/generateToken.js";
 import ApiError from "../utils/ApiError.js";
 import { setAuditActor } from "../middleware/auditContext.js";
@@ -133,15 +134,18 @@ export const login = async (req, res, next) => {
     }
 
     // Success — clear lock counters
+    const sessionId = crypto.randomUUID();
+
     await prisma.user.update({
       where: { id: user.id },
       data: {
         failed_login_attempts: 0,
         locked_until: null,
+        session_id: sessionId, // ← new login kills previous session
       },
     });
 
-    const token = generateToken(user.id);
+    const token = generateToken(user.id, sessionId);
     req.user = user;
     setAuditActor(user);
 
@@ -183,6 +187,7 @@ export const getMe = async (req, res, next) => {
         work_location_type: true,
         profile_image_url: true,
         is_active: true,
+        must_change_password: true,
         createdAt: true,
       },
     });
@@ -274,9 +279,15 @@ export const changePassword = async (req, res, next) => {
 
     const hashed = await bcrypt.hash(newPassword, 12);
 
+    const sessionId = crypto.randomUUID();
+
     await prisma.user.update({
       where: { id: userId },
-      data: { password: hashed, must_change_password: false },
+      data: {
+        password: hashed,
+        must_change_password: false,
+        session_id: sessionId,
+      },
     });
 
     try {

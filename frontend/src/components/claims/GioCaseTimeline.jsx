@@ -80,6 +80,13 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
     (a, b) => a.stage_order - b.stage_order,
   );
 
+  const isRejected = claim?.status === "Rejected";
+  const isClosed =
+    isRejected ||
+    claim?.status === "Closed" ||
+    claim?.status === "Completed" ||
+    claim?.status === "Claim_Closed";
+
   const currentStage = activities.find((a) => a.status === "In_Progress");
   const needsManagerAssign = currentStage?.stage_name === ASSIGN_MANAGER_STAGE;
   const needsPrincipalAssign =
@@ -107,6 +114,7 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
 
   const isReturned = RETURNED_STATUSES.includes(claim.status);
   const canResubmit =
+    !isRejected &&
     isReturned &&
     (user?.id === claim.submitted_by_id ||
       user?.role === "secretary" ||
@@ -144,6 +152,14 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
   };
 
   const handleComplete = async () => {
+    if (isRejected) {
+      toast({
+        title: "Case rejected",
+        description: "No further actions allowed.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (actionMode === "return") {
       if (!returnTargetOrder) {
         toast({
@@ -263,6 +279,14 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
   };
 
   const handleResubmit = async () => {
+    if (isRejected) {
+      toast({
+        title: "Case rejected",
+        description: "Resubmit is not allowed.",
+        variant: "destructive",
+      });
+      return;
+    }
     setResubmitting(true);
     try {
       await api.post(`/claims/${claim.id}/resubmit-stage`, { comments: "" });
@@ -294,6 +318,21 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
 
   return (
     <>
+      {isRejected && (
+        <div className="mb-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm text-red-900">
+          <p className="font-medium">Rejected</p>
+          {claim.rejection_date && (
+            <p className="text-xs mt-0.5">
+              Date: {moment(claim.rejection_date).format("DD MMM YYYY")}
+            </p>
+          )}
+          {claim.rejection_reason && (
+            <p className="text-xs mt-1 italic">
+              &quot;{claim.rejection_reason}&quot;
+            </p>
+          )}
+        </div>
+      )}
       {canResubmit && (
         <Card className="border-0 shadow-sm border-l-4 border-l-orange-500 mb-4">
           <CardContent className="p-4 space-y-3">
@@ -417,7 +456,7 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
                         )}
                       </div>
 
-                      {status === "In Progress" && (
+                      {status === "In Progress" && !isClosed && (
                         <div>
                           {mine ? (
                             <div className="flex gap-1 flex-wrap justify-end">

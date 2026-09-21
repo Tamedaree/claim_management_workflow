@@ -38,6 +38,17 @@ export default function AppLayout() {
   }, []);
 
   useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key === "token" && !e.newValue) {
+        setUser(null);
+        window.location.href = "/login";
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  useEffect(() => {
     const onResize = () => {
       if (window.innerWidth >= 1024) setMobileOpen(false);
     };

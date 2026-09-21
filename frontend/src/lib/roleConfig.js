@@ -105,39 +105,21 @@ export function nextTierEntry(tierList, stageName) {
 
 // Claim Division status → color/badge tone
 export const CLAIM_DIVISION_STATUS_COLORS = {
-  Notification_Received: "bg-gray-100 text-gray-700",
   Claim_Registered: "bg-blue-100 text-blue-700",
   Pending_Assignment: "bg-amber-100 text-amber-700",
-  Assigned_to_Principal_of_Claim: "bg-blue-100 text-blue-700",
   Assigned_to_Claim_Adjuster: "bg-blue-100 text-blue-700",
-  Underwriting_Verification: "bg-indigo-100 text-indigo-700",
-  Survey_Requested: "bg-amber-100 text-amber-700",
   Survey_in_Progress: "bg-blue-100 text-blue-700",
-  Damage_Assessment_Completed: "bg-emerald-100 text-emerald-700",
-  Principal_Review_Pending: "bg-amber-100 text-amber-700",
-  Proforma_Collection: "bg-blue-100 text-blue-700",
-  Tender_Analysis_Pending: "bg-amber-100 text-amber-700",
-  Garage_Selection_Pending: "bg-amber-100 text-amber-700",
-  Re_bid_Pending: "bg-orange-100 text-orange-700",
-  Independent_Assessment_Pending: "bg-amber-100 text-amber-700",
-  Work_Order_Review_Pending: "bg-amber-100 text-amber-700",
+  Bid_Tender_in_Progress: "bg-indigo-100 text-indigo-700",
+  Decision_Pending: "bg-amber-100 text-amber-700",
+  Work_Order_Pending: "bg-amber-100 text-amber-700",
   Work_Order_Approved: "bg-emerald-100 text-emerald-700",
-  Repair_in_Progress: "bg-blue-100 text-blue-700",
-  Repair_Approval_Pending: "bg-amber-100 text-amber-700",
-  Repair_Approved: "bg-emerald-100 text-emerald-700",
-  Total_Loss_Review: "bg-purple-100 text-purple-700",
-  Salvage_Pending: "bg-amber-100 text-amber-700",
-  Satisfaction_Pending: "bg-amber-100 text-amber-700",
   Payment_Preparation: "bg-blue-100 text-blue-700",
-  Payment_Review_Pending: "bg-amber-100 text-amber-700",
-  Payment_Approval_Pending: "bg-amber-100 text-amber-700",
-  Payment_Document_Approved: "bg-emerald-100 text-emerald-700",
-  Forwarded_to_Finance: "bg-blue-100 text-blue-700",
-  Payment_Pending: "bg-amber-100 text-amber-700",
-  Payment_Completed: "bg-emerald-100 text-emerald-700",
+  Payment_Approved: "bg-emerald-100 text-emerald-700",
   Claim_Closed: "bg-emerald-100 text-emerald-700",
+
+  // keep if still used by return / entry
   Returned_for_Correction: "bg-orange-100 text-orange-700",
-  Escalated_to_GIO: "bg-purple-100 text-purple-700",
+  Notification_Received: "bg-gray-100 text-gray-700",
 };
 
 // GIO case status → color/badge tone
@@ -566,186 +548,145 @@ export function getWorkflowScopeForRole(role) {
   return WORKFLOW_SCOPE_BY_ROLE[role] || "all";
 }
 
-// Claim Division Workflow Stages (Head Office)
+// ============ OPERATION 1: Claim Division New Claim Notification (Kefla Ager Branch) ============
 export const WORKFLOW_STAGES = [
   {
     stage_name: "Claim Receipt & Registration",
-    stage_label: "Registration",
     stage_order: 1,
     responsible_role: "secretary",
     department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
     description:
-      "Secretary registers incoming claim from forwarding office — notification date, forwarding office, received reference, class of business, insured info and documents",
+      "Register and manage incoming claim notifications and related claim information.",
   },
   {
-    stage_name: "Claim Assignment",
-    stage_label: "Assignment",
+    stage_name: "Claim Review & Assignment",
     stage_order: 2,
+    responsible_role: "claim_manager",
+    department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
+    description:
+      "Claim Manager assigns the registered claim to the appropriate Principal of Claim.",
+  },
+  {
+    stage_name: "Principal Assignment to Adjuster",
+    stage_order: 3,
     responsible_role: "principal_claim_officer",
     department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
     description:
-      "Principal of Claim assigns the claim to a Claim Adjuster based on workload and specialization",
+      "Assigned Principal of Claim allocates the claim to one of the Claim Adjusters within their team.",
   },
   {
-    stage_name: "Claim Adjuster Allocation",
-    stage_label: "Allocation",
-    stage_order: 3,
-    responsible_role: "claim_adjuster",
-    department: "Claim Division",
-    description:
-      "Adjuster receives allocation, registers operational info and performs initial verification",
-  },
-  {
-    stage_name: "Policy & Underwriting Verification",
-    stage_label: "Policy check",
+    stage_name: "Survey & Damage Assessment Request",
     stage_order: 4,
     responsible_role: "claim_adjuster",
     department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
     description:
-      "Adjuster verifies policy and underwriting; flags subrogation, recovery or reinsurance if applicable",
+      "Date towed to RTC; internal survey request (Yes/No + date); damage assessment request at RTC (date).",
   },
   {
-    stage_name: "Third-Party Recovery Recording",
-    stage_label: "Recovery",
+    stage_name: "Survey & Damage Assessment Review",
     stage_order: 5,
-    responsible_role: "claim_adjuster",
-    department: "Claim Division",
-    description:
-      "If third-party recovery applies, adjuster records plate, accident date, recoverable amount, responsible party and status",
-  },
-  {
-    stage_name: "Damage Assessment Request",
-    stage_label: "Survey request",
-    stage_order: 6,
-    responsible_role: "claim_adjuster",
-    department: "Claim Division",
-    description:
-      "Adjuster prepares damage assessment request and forwards to Surveyor with towing/RTC info if needed",
-  },
-  {
-    stage_name: "Survey & Damage Assessment",
-    stage_label: "Survey",
-    stage_order: 7,
-    responsible_role: "surveyor",
-    department: "Claim Division",
-    description:
-      "Surveyor inspects vehicle and prepares Damage Assessment Report with findings, estimated cost and photos",
-  },
-  {
-    stage_name: "Assessment Review by Principal",
-    stage_label: "Assessment review",
-    stage_order: 8,
     responsible_role: "principal_claim_officer",
     department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
     description:
-      "Principal reviews survey report and decides repair vs total loss path",
+      "Principal of Claim reviews the survey and damage assessment submitted by the Adjuster.",
   },
   {
-    stage_name: "Proforma & Garage Bidding",
-    stage_label: "Garage bidding",
-    stage_order: 9,
-    responsible_role: "claim_adjuster",
+    stage_name: "Bid / Tender Process",
+    stage_order: 6,
+    responsible_role: "principal_claim_officer",
     department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
+    applicable_insurance_types: ["Motor"],
     description:
-      "For repairable vehicles: adjuster collects proformas and manages garage bidding and tender process",
+      "Garages/dealers/suppliers invited to bid; bid opening date; re-bid or independent-assessment flag.",
   },
   {
-    stage_name: "Tender Analysis & Garage Selection",
-    stage_label: "Garage selection",
+    stage_name: "Decision",
+    stage_order: 7,
+    responsible_role: "claim_manager", // entry role — escalates via ESCALATION_CHAINS
+    department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
+    description:
+      "Decision type: Total Loss / Repair / Less Salvage / Cash Option. Manager may finalize or forward to Director.",
+  },
+  {
+    stage_name: "Work Order / Payment Authorization",
+    stage_order: 8,
+    responsible_role: "claim_manager",
+    department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
+    description:
+      "Work order or payment authorization for the approved option. Escalates Manager → Director → Senior Director → CEO as needed.",
+  },
+  {
+    stage_name: "Repair Execution & Quality Check",
+    stage_order: 9,
+    responsible_role: "principal_claim_officer",
+    department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
+    description:
+      "Repair-approval survey date; satisfaction confirmation (Yes/No + date).",
+  },
+  {
+    stage_name: "Discharge & Payment Preparation",
     stage_order: 10,
     responsible_role: "principal_claim_officer",
     department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
     description:
-      "Principal evaluates tenders and recommends selected garage; handles re-bid if insured disagrees",
+      "Payee, final payment amount, payment date; total-loss document checklist if applicable.",
   },
   {
-    stage_name: "Work Order Preparation & Issuance",
-    stage_label: "Work order",
+    stage_name: "Discharge & Payment Approval",
     stage_order: 11,
-    responsible_role: "claim_adjuster",
-    department: "Claim Division",
-    description:
-      "Adjuster prepares work order (approved by Principal), records work order number, garage and completion date",
-  },
-  {
-    stage_name: "Repair Monitoring",
-    stage_label: "Repair",
-    stage_order: 12,
-    responsible_role: "claim_adjuster",
-    department: "Claim Division",
-    description:
-      "Adjuster monitors repair progress, garage status, additional repairs and parts availability",
-  },
-  {
-    stage_name: "Final Inspection (Post-Repair)",
-    stage_label: "Final inspection",
-    stage_order: 13,
-    responsible_role: "surveyor",
-    department: "Claim Division",
-    description:
-      "Surveyor performs final inspection after repairs and prepares final inspection report",
-  },
-  {
-    stage_name: "Total Loss Assessment",
-    stage_label: "Total loss",
-    stage_order: 14,
-    responsible_role: "principal_claim_officer",
-    department: "Claim Division",
-    description:
-      "For total loss vehicles: Principal records total loss decision, salvage value, cash option and less salvage",
-  },
-  {
-    stage_name: "Salvage & Satisfaction Note Collection",
-    stage_label: "Salvage",
-    stage_order: 15,
-    responsible_role: "claim_adjuster",
-    department: "Claim Division",
-    description:
-      "Adjuster collects salvage and satisfaction note from insured and records collection status",
-  },
-  {
-    stage_name: "Payment Preparation & Settlement Recommendation",
-    stage_label: "Payment prep",
-    stage_order: 16,
-    responsible_role: "claim_adjuster",
-    department: "Claim Division",
-    description:
-      "Adjuster prepares payment documents and settlement recommendation for Principal review",
-  },
-  {
-    stage_name: "Managerial Review",
-    stage_label: "Manager review",
-    stage_order: 17,
     responsible_role: "claim_manager",
     department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
     description:
-      "Claim Manager performs managerial review before forwarding to Director",
+      "Discharge and payment approval. Escalates Manager → Director as needed.",
   },
   {
-    stage_name: "Director Approval",
-    stage_label: "Director",
-    stage_order: 18,
-    responsible_role: "director",
+    stage_name: "Closure",
+    stage_order: 12,
+    responsible_role: "claim_manager",
     department: "Claim Division",
+    applicable_office_types: ["Kefla_Ager_Branch"],
     description:
-      "Director approves claim; system auto-escalates to CEO if amount exceeds delegated authority",
+      "Final status/remark; claim closed date. Escalates Manager → Director as needed.",
   },
+];
+
+// ============ OPERATION 2: Claim for Approval (District/Branch) ============
+export const CLAIM_APPROVAL_STAGES = [
   {
-    stage_name: "Payment Processing",
-    stage_label: "Payment",
-    stage_order: 19,
-    responsible_role: "principal_claim_officer",
-    department: "Claim Division",
-    description:
-      "Principal processes payment and disburses settlement to insured",
-  },
-  {
-    stage_name: "Claim Closed",
-    stage_label: "Closed",
-    stage_order: 20,
+    stage_name: "Approval Case Registration",
+    stage_order: 1,
     responsible_role: "secretary",
     department: "Claim Division",
-    description: "Secretary closes the claim and finalizes all records",
+    applicable_office_types: ["District_Office"],
+    description:
+      "Claim file received from District/Branch. Notification received date; district/branch name; class of business; insured name; plate number (motor); claim number; subrogation/recovery/reinsurance flag.",
+  },
+  {
+    stage_name: "Approval Review",
+    stage_order: 2,
+    responsible_role: "director",
+    department: "Claim Division",
+    applicable_office_types: ["District_Office"],
+    description: "Escalates Director → Senior Director → CEO as needed.",
+  },
+  {
+    stage_name: "Approval Case Closure",
+    stage_order: 3,
+    responsible_role: "secretary",
+    department: "Claim Division",
+    applicable_office_types: ["District_Office"],
+    description: "Secretary closes the case.",
   },
 ];
 
@@ -822,23 +763,55 @@ export const GIO_WORKFLOW_STAGES = [
   },
 ];
 
-const ALL_STAGES = [...WORKFLOW_STAGES, ...GIO_WORKFLOW_STAGES];
+export const ESCALATION_CHAINS = {
+  Decision: ["claim_manager", "director"],
+  "Work Order / Payment Authorization": [
+    "claim_manager",
+    "director",
+    "senior_director",
+    "ceo",
+  ],
+  "Discharge & Payment Approval": ["claim_manager", "director"],
+  Closure: ["claim_manager", "director"],
+  "Approval Review": ["director", "senior_director", "ceo"],
+};
 
-export function getStageLabel(stageOrName) {
-  if (!stageOrName) return "—";
-  if (typeof stageOrName === "object") {
-    return stageOrName.stage_label || stageOrName.stage_name || "—";
-  }
-  const found = ALL_STAGES.find((s) => s.stage_name === stageOrName);
-  return found?.stage_label || stageOrName;
+export function getEscalationChain(stageName) {
+  return ESCALATION_CHAINS[stageName] || null;
 }
 
-/** Long text — tooltip / detail only */
-export function getStageDescription(stageOrName) {
-  if (!stageOrName) return "";
-  const name =
-    typeof stageOrName === "object" ? stageOrName.stage_name : stageOrName;
-  return ALL_STAGES.find((s) => s.stage_name === name)?.description || "";
+export function isEscalationStage(stageName) {
+  return !!ESCALATION_CHAINS[stageName];
+}
+
+export function currentRoleForActivity(stage, activity) {
+  if (activity?.responsible_role && isEscalationStage(stage.stage_name)) {
+    return activity.responsible_role;
+  }
+  return stage.responsible_role;
+}
+
+export function isLastInChain(stageName, role) {
+  const chain = getEscalationChain(stageName);
+  if (!chain) return true;
+  const idx = chain.indexOf(role);
+  return idx === -1 || idx === chain.length - 1;
+}
+
+export function nextRoleInChain(stageName, role) {
+  const chain = getEscalationChain(stageName);
+  if (!chain) return null;
+  const idx = chain.indexOf(role);
+  if (idx === -1 || idx === chain.length - 1) return null;
+  return chain[idx + 1];
+}
+
+export function getStageLabel(stageName) {
+  return stageName || "";
+}
+export function getStageDescription(stageName) {
+  const all = [...WORKFLOW_STAGES, ...CLAIM_APPROVAL_STAGES];
+  return all.find((s) => s.stage_name === stageName)?.description || "";
 }
 
 export const ACTIVITY_STATUS_COLORS = {

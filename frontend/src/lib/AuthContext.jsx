@@ -33,7 +33,7 @@ export function AuthProvider({ children }) {
         const res = await api.get("/auth/me");
         if (cancelled) return;
 
-        const currentUser = res.data?.data || res.data;
+        const currentUser = res.data?.user ?? res.data?.data ?? res.data;
         setUser(currentUser);
         setIsAuthenticated(true);
         setAuthError(null);
@@ -79,7 +79,7 @@ export function AuthProvider({ children }) {
       }
 
       const res = await api.get("/auth/me");
-      const currentUser = res.data?.data || res.data;
+      const currentUser = res.data?.user ?? res.data?.data ?? res.data;
 
       setUser(currentUser);
       setIsAuthenticated(true);

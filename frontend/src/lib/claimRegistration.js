@@ -2,10 +2,7 @@ import api from "@/api/api";
 import { ROLE_LABELS, toEnumKey, GIO_WORKFLOW_STAGES } from "@/lib/roleConfig";
 
 // Forwarding office types per registration type
-export const NEW_CLAIM_OFFICE_TYPES = [
-  "District Office",
-  "Kefla Ager Branch",
-];
+export const NEW_CLAIM_OFFICE_TYPES = ["District Office", "Kefla Ager Branch"];
 export const FORWARDED_CLAIM_OFFICE_TYPES = [
   "Service Center",
   "District Office",
@@ -16,6 +13,11 @@ export const REGISTRATION_TYPES = [
     value: "New Claim Notification",
     label: "New Claim Notification",
     description: "Kefla Ager Branch",
+  },
+  {
+    value: "Claim for Approval",
+    label: "Claim for Approval",
+    description: "District / Branch",
   },
   {
     value: "GIO Case",
@@ -194,29 +196,23 @@ export async function registerClaim(
     });
 
     // Move to next stage (assignment) — adjust name to your WorkflowStage list
-    const nextStageName = "Claim Assignment";
-    let nextOwnerId = null;
-    let nextOwnerName = null;
+    const nextStageName = "Claim Review & Assignment";
 
-    try {
-      const usersRes = await api.get("/users?role=principal_claim_officer");
-      const list = usersRes.data.data || [];
-      if (list[0]) {
-        nextOwnerId = list[0].id;
-        nextOwnerName = list[0].full_name || list[0].email;
-      }
-    } catch {
-      /* ignore */
-    }
+    // load claim managers
+    const usersRes = await api.get("/users?role=claim_manager");
+    const list = usersRes.data?.data || [];
+    const nextOwnerId = list[0]?.id || null;
+    const nextOwnerName = list[0]?.full_name || list[0]?.email || null;
 
     await api.put(`/claims/${created.id}`, {
       workflow_stage: nextStageName,
       workflow_stage_order: 2,
-      status: "Pending_Assignment",
+      status: "Pending_Assignment", // or your status for manager review
       current_owner_id: nextOwnerId,
       current_owner_name: nextOwnerName,
+      current_approver_role: "Claim_Manager",
     });
-
+    
     await api.post("/claim-activities", {
       claim_id: created.id,
       claim_reference: normalizedClaimData.claim_reference,
@@ -439,6 +435,119 @@ export async function registerGioCase(form, user, { asDraft = false } = {}) {
           // ignore
         }
       }
+    }
+  }
+
+  return created;
+}
+
+export async function registerApprovalCase(form, user) {
+  const submitterName = await resolveSubmitterName(user);
+  const officeType = toEnumKey("District Office");
+
+  const registrationData = {
+    notification_received_date: form.notification_received_date,
+    district_branch_name: form.originating_office,
+    class_of_business: form.insurance_type,
+    insured_name: form.insured_name,
+    plate_number: form.plate_number || "",
+    subrogation_recovery_reinsurance: form.subrogation_recovery_reinsurance,
+  };
+
+  const createRes = await api.post("/claims", {
+    claim_reference: form.claim_reference,
+    claimant_name: form.insured_name,
+    insurance_type: form.insurance_type,
+    plate_number:
+      form.insurance_type === "Motor" ? form.plate_number || null : null,
+    claim_amount: 0,
+    incident_date:
+      form.notification_received_date || new Date().toISOString().slice(0, 10),
+    originating_office: form.originating_office,
+    originating_office_type: officeType,
+    date_received: form.notification_received_date || null,
+    remarks: form.remarks || null,
+    documents: [],
+    priority: "Medium",
+    submitted_by_id: user?.id,
+    submitted_by_name: submitterName,
+    status: "Notification_Received",
+    workflow_type: "Claim_Division",
+    current_department: "Claim_Division",
+    submission_date: new Date().toISOString(),
+    workflow_stage: "Approval Case Registration",
+    workflow_stage_order: 1,
+    current_owner_id: user?.id,
+    current_owner_name: submitterName,
+    current_approver_role: "None",
+    registration_data: registrationData,
+  });
+
+  const created = createRes.data.data || createRes.data;
+
+  await api.post("/claim-activities", {
+    claim_id: created.id,
+    claim_reference: form.claim_reference,
+    stage_name: "Approval Case Registration",
+    stage_order: 1,
+    status: "Completed",
+    responsible_user_id: user?.id,
+    responsible_user_name: submitterName,
+    responsible_role: ROLE_LABELS[user?.role] || user?.role,
+    department: "Claim Division",
+    started_at: new Date().toISOString(),
+    completed_at: new Date().toISOString(),
+    registration_data: registrationData,
+    comments: form.remarks || "Approval case registered",
+  });
+
+  // Enters the escalation chain at its first role: director
+  let directorId = null;
+  let directorName = null;
+  try {
+    const usersRes = await api.get("/users?role=director");
+    const list = usersRes.data.data || [];
+    if (list[0]) {
+      directorId = list[0].id;
+      directorName = list[0].full_name || list[0].email;
+    }
+  } catch {
+    /* ignore */
+  }
+
+  await api.put(`/claims/${created.id}`, {
+    workflow_stage: "Approval Review",
+    workflow_stage_order: 2,
+    status: "Decision_Pending",
+    current_owner_id: directorId,
+    current_owner_name: directorName,
+    current_approver_role: "Director",
+  });
+
+  await api.post("/claim-activities", {
+    claim_id: created.id,
+    claim_reference: form.claim_reference,
+    stage_name: "Approval Review",
+    stage_order: 2,
+    status: "In_Progress",
+    responsible_role: "director", // entry role of the escalation chain
+    department: "Claim Division",
+    started_at: new Date().toISOString(),
+    comments: "Awaiting Director review",
+  });
+
+  if (directorId) {
+    try {
+      await api.post("/notifications", {
+        user_id: directorId,
+        claim_id: created.id,
+        claim_reference: form.claim_reference,
+        title: "New claim for approval",
+        message: `${form.claim_reference} registered and forwarded for Director review.`,
+        type: "approval_required",
+      });
+    } catch {
+      /* ignore */
     }
   }
 

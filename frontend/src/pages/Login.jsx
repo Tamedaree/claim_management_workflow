@@ -41,6 +41,7 @@ export default function Login() {
 
       if (u?.must_change_password) {
         window.location.href = "/change-password?forced=1";
+        return;
       } else {
         window.location.href = "/";
       }

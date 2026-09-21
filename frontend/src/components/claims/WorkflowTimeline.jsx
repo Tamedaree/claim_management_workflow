@@ -43,28 +43,28 @@ import {
   ROLE_LABELS,
   getStageLabel,
   getStageDescription,
-} from "@/lib/roleConfig";
-import {
-  CLAIM_DIVISION_APPROVAL_TIER,
-  findTierEntry,
-  isLastTierStage,
-  nextTierEntry,
-  normalizeStageName,
+  getEscalationChain,
+  isEscalationStage,
+  currentRoleForActivity,
+  isLastInChain,
+  nextRoleInChain,
 } from "@/lib/roleConfig";
 import { findApproversByRoleAndLocation } from "@/lib/userMatching";
 import { statusForCompletedStage } from "@/lib/statusMapping";
+import StageRegistrationForm, {
+  StageDataSummary,
+  StageApprovalHistory,
+} from "@/components/claims/StageRegistrationForm";
+import { STAGE_FIELD_CONFIG } from "@/lib/stageFieldConfig";
 import moment from "moment";
 
 function buildStaffName(s) {
   if (!s) return "";
-  // First + middle only (as requested)
   return [s.first_name, s.middle_name].filter(Boolean).join(" ").trim();
 }
 
 async function attachStaffNames(users) {
   if (!users?.length) return users || [];
-
-  // Prefer names already returned by GET /users (withStaffNames on backend)
   const needsLookup = users.some(
     (u) => !u.full_name && !u.first_name && !u.middle_name,
   );
@@ -77,7 +77,6 @@ async function attachStaffNames(users) {
         u.email,
     }));
   }
-
   try {
     const staffRes = await api.get("/staff");
     const staffList = staffRes.data?.data || [];
@@ -87,7 +86,6 @@ async function attachStaffNames(users) {
         buildStaffName(s),
       ]),
     );
-
     return users.map((u) => {
       const fromStaff = nameByEmail.get(String(u.email || "").toLowerCase());
       const fromUser = [u.first_name, u.middle_name].filter(Boolean).join(" ");
@@ -131,37 +129,44 @@ const toDisplayStatus = (s) => {
   return s;
 };
 
+function claimWorkflowStream(claim) {
+  const reg = (claim?.registration_type || "").replace(/\s+/g, "_");
+  const stage = claim?.workflow_stage || "";
+
+  if (
+    reg === "Claim_for_Approval" ||
+    stage.startsWith("Approval") ||
+    claim?.originating_office_type === "District_Office"
+  ) {
+    return "Claim_Approval";
+  }
+  return "New_Claim";
+}
+
 const filterStagesForClaim = (stagesData, claim) => {
   const type = claim?.insurance_type;
+  const stream = claimWorkflowStream(claim);
   let list = Array.isArray(stagesData) ? stagesData : [];
 
-  // Claim Division timeline only
+  // Independent streams
+  list = list.filter((s) => (s.workflow_stream || "New_Claim") === stream);
+
   list = list.filter((s) => {
     const wt = s.workflow_type || "Claim_Division";
     return wt === "Claim_Division" || wt === "Both";
   });
 
-  if (!type) return list;
+  if (!type) {
+    return list.sort((a, b) => a.stage_order - b.stage_order);
+  }
 
-  return list.filter((s) => {
+  list = list.filter((s) => {
     const applicable = s.applicable_insurance_types;
-    if (!applicable || (Array.isArray(applicable) && applicable.length === 0)) {
-      return true; // empty = all types
-    }
-    const arr = Array.isArray(applicable)
-      ? applicable
-      : typeof applicable === "string"
-        ? (() => {
-            try {
-              return JSON.parse(applicable);
-            } catch {
-              return [];
-            }
-          })()
-        : [];
-    if (arr.length === 0) return true;
-    return arr.includes(type) || arr.includes("All");
+    if (!applicable || applicable.length === 0) return true;
+    return applicable.includes(type) || applicable.includes("All");
   });
+
+  return list.sort((a, b) => a.stage_order - b.stage_order);
 };
 
 const isAdjusterAssignStage = (name = "") => {
@@ -186,6 +191,55 @@ const isPrincipalAssignStageName = (name = "") => {
   );
 };
 
+function toYesNo(v) {
+  if (v === true || v === "Yes" || v === "yes") return "Yes";
+  if (v === false || v === "No" || v === "no") return "No";
+  return "No";
+}
+
+function buildRegistrationPrefill(claim, activity) {
+  const prev = activity?.registration_data || {};
+  const claimReg = claim?.registration_data || {};
+
+  const classOfBusiness =
+    prev.class_of_business ||
+    claimReg.class_of_business ||
+    claim?.insurance_type ||
+    "";
+
+  return {
+    claim_reference: prev.claim_reference || claim?.claim_reference || "",
+    notification_received_date:
+      prev.notification_received_date ||
+      claimReg.notification_received_date ||
+      (claim?.submission_date
+        ? String(claim.submission_date).slice(0, 10)
+        : "") ||
+      "",
+    district_branch_name:
+      prev.district_branch_name ||
+      claimReg.district_branch_name ||
+      claim?.originating_office ||
+      "",
+    class_of_business: classOfBusiness,
+    plate_number:
+      prev.plate_number || claimReg.plate_number || claim?.plate_number || "",
+    insured_name:
+      prev.insured_name || claimReg.insured_name || claim?.claimant_name || "",
+    is_subrogation: toYesNo(
+      prev.is_subrogation ?? claimReg.is_subrogation ?? claim?.is_subrogation,
+    ),
+    is_recovery: toYesNo(
+      prev.is_recovery ?? claimReg.is_recovery ?? claim?.is_recovery,
+    ),
+    is_reinsurance: toYesNo(
+      prev.is_reinsurance ?? claimReg.is_reinsurance ?? claim?.is_reinsurance,
+    ),
+    review_date: prev.review_date || new Date().toISOString().slice(0, 10),
+    correction_comments: prev.correction_comments || "",
+  };
+}
+
 export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const { toast } = useToast();
   const [stages, setStages] = useState([]);
@@ -202,36 +256,39 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const [completionChoice, setCompletionChoice] = useState("forward");
   const [actingUserName, setActingUserName] = useState(null);
   const [nameByEmail, setNameByEmail] = useState({});
+  const [stageData, setStageData] = useState({});
+
   const [returnModalOpen, setReturnModalOpen] = useState(false);
   const [returningStage, setReturningStage] = useState(null);
   const [returnTargetOrder, setReturnTargetOrder] = useState("");
   const [returnComments, setReturnComments] = useState("");
   const [returnProcessing, setReturnProcessing] = useState(false);
 
+  const isTerminal =
+    claim?.status === "Rejected" ||
+    claim?.status === "Claim_Closed" ||
+    claim?.status === "Closed";
+
   const fetchWorkflowData = async (claimId, claimData) => {
     const [stagesRes, activitiesRes] = await Promise.all([
       api.get("/workflow-stages?is_active=true"),
       api.get(`/claim-activities/claim/${claimId}`),
     ]);
-
     const rawStages = (stagesRes.data?.data || stagesRes.data || []).sort(
       (a, b) => a.stage_order - b.stage_order,
     );
     const stagesData = filterStagesForClaim(rawStages, claimData);
-
     const activitiesData = (
       activitiesRes.data?.data ||
       activitiesRes.data ||
       []
     ).sort((a, b) => a.stage_order - b.stage_order);
-
     return { stagesData, activitiesData };
   };
 
   useEffect(() => {
     if (!claim?.id) return;
     let cancelled = false;
-
     (async () => {
       setLoading(true);
       try {
@@ -249,7 +306,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         if (!cancelled) setLoading(false);
       }
     })();
-
     return () => {
       cancelled = true;
     };
@@ -275,9 +331,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   useEffect(() => {
     if (!user?.email) return;
     let cancelled = false;
-
     (async () => {
-      // 1) From auth user if already enriched
       const fromUser = [user.first_name, user.middle_name]
         .filter(Boolean)
         .join(" ")
@@ -287,13 +341,10 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         return;
       }
       if (user.full_name && !user.full_name.includes("@")) {
-        // full_name may include last name — take first two words if you only want first+middle
         const parts = user.full_name.trim().split(/\s+/);
         setActingUserName(parts.slice(0, 2).join(" "));
         return;
       }
-
-      // 2) Staff by email (list all + match if ?email filter unsupported)
       try {
         const res = await api.get("/staff");
         const list = res.data?.data || [];
@@ -308,7 +359,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         console.error("Failed to load staff name:", error);
       }
     })();
-
     return () => {
       cancelled = true;
     };
@@ -344,13 +394,23 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const getActivityForStage = (stageName) =>
     activities.find((a) => a.stage_name === stageName);
 
-  const isMyStage = (stage) =>
-    user?.role === "admin" || stage.responsible_role === user?.role;
+  // Escalation-aware: if the stage has a chain, "mine" means my role
+  // is whoever currently holds it (activity.responsible_role), not
+  // just the stage's original entry-level role.
+  const isMyStage = (stage, activity) => {
+    if (user?.role === "admin") return true;
+    if (!isEscalationStage(stage.stage_name)) {
+      return stage.responsible_role === user?.role;
+    }
+    const current = currentRoleForActivity(stage, activity);
+    return current === user?.role;
+  };
 
   const visibleStages = stages;
 
   const canActOnStage = (stage) => {
-    if (!isMyStage(stage)) return false;
+    const activity = getActivityForStage(stage.stage_name);
+    if (!isMyStage(stage, activity)) return false;
     const prev = stages
       .filter((s) => s.stage_order < stage.stage_order)
       .sort((a, b) => b.stage_order - a.stage_order)[0];
@@ -369,7 +429,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       } catch {
         list = [];
       }
-
       if (!Array.isArray(list) || list.length === 0) {
         const resAll = await api.get("/users");
         const all = resAll.data?.data ?? resAll.data ?? [];
@@ -382,7 +441,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
               .includes("principal"),
         );
       }
-
       const active = (Array.isArray(list) ? list : []).filter(
         (u) => u.is_active !== false,
       );
@@ -420,17 +478,27 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   };
 
   const openActionModal = async (stage, activity, newStatus) => {
-    if (!isMyStage(stage)) {
+    if (isTerminal) {
       toast({
-        title: "Not your stage",
-        description: `This stage is assigned to ${
-          ROLE_LABELS[stage.responsible_role] || stage.responsible_role
-        }.`,
+        title: claim?.status === "Rejected" ? "Claim rejected" : "Claim closed",
+        description:
+          claim?.status === "Rejected"
+            ? "Workflow actions are disabled. History is kept."
+            : "This claim is closed.",
         variant: "destructive",
       });
       return;
     }
 
+    if (!isMyStage(stage, activity)) {
+      const current = currentRoleForActivity(stage, activity);
+      toast({
+        title: "Not your turn",
+        description: `This stage currently needs action from ${ROLE_LABELS[current] || current}.`,
+        variant: "destructive",
+      });
+      return;
+    }
     if (!canActOnStage(stage) && newStatus !== "On Hold") {
       toast({
         title: "Complete previous stage first",
@@ -441,9 +509,19 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       return;
     }
 
+    const isRegStage =
+      stage.stage_name === "Claim Receipt & Registration" ||
+      stage.stage_name === "Approval Case Registration";
+
+    // Prefer activity data, then claim fields (registration / return correction)
+    const prefill = isRegStage
+      ? buildRegistrationPrefill(claim, activity)
+      : { ...(activity?.registration_data || {}) };
+
     setActionModal({ stage, activity, newStatus });
-    setComments(activity?.comments || "");
-    setReviewDate(activity?.registration_data?.review_date || "");
+    setComments(prefill.correction_comments || "");
+    setStageData(prefill); // ONLY set once — do not overwrite below
+    setReviewDate(prefill.review_date || "");
     setSelectedAdjusterId(
       activity?.registration_data?.assigned_adjuster_id || "",
     );
@@ -452,15 +530,19 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     );
     setCompletionChoice("forward");
 
-    if (isAdjusterAssignStage(stage.stage_name)) {
-      await loadAdjusters();
-    }
-    if (isPrincipalAssignStageName(stage.stage_name)) {
-      await loadPrincipals();
-    }
+    if (isAdjusterAssignStage(stage.stage_name)) await loadAdjusters();
+    if (isPrincipalAssignStageName(stage.stage_name)) await loadPrincipals();
   };
 
   const openReturnModal = (stage) => {
+    if (isTerminal) {
+      toast({
+        title: claim?.status === "Rejected" ? "Claim rejected" : "Claim closed",
+        description: "Return is not allowed on this claim.",
+        variant: "destructive",
+      });
+      return;
+    }
     setReturningStage(stage);
     setReturnTargetOrder("");
     setReturnComments("");
@@ -470,11 +552,19 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const earlierStagesFor = (stage) =>
     stages
       .filter((s) => s.stage_order < stage.stage_order)
-      .sort((a, b) => b.stage_order - a.stage_order); // most recent first
+      .sort((a, b) => b.stage_order - a.stage_order);
 
   const handleReturnConfirm = async () => {
+    if (!actionModal) return;
+    if (isTerminal) {
+      toast({
+        title: "Claim rejected",
+        description: "No further stage actions.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!returningStage) return;
-
     if (!returnTargetOrder) {
       toast({
         title: "Select a stage",
@@ -483,7 +573,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       });
       return;
     }
-
     if (!returnComments.trim()) {
       toast({
         title: "Comments required",
@@ -502,6 +591,35 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       const now = new Date().toISOString();
       const actorName = actingUserName || user.full_name || user.email;
 
+      const targetRole = targetStage.responsible_role;
+      let nextOwnerId = null;
+      let nextOwnerName = null;
+
+      try {
+        const recipients = await findApproversByRoleAndLocation(
+          targetRole,
+          claim,
+        );
+        if (recipients[0]) {
+          nextOwnerId = recipients[0].id;
+          nextOwnerName =
+            recipients[0].full_name || recipients[0].email || null;
+        }
+      } catch {
+        /* ignore */
+      }
+
+      const targetActivity = activities.find(
+        (a) => a.stage_name === targetStage.stage_name,
+      );
+      if (
+        targetActivity?.responsible_user_id &&
+        targetActivity?.responsible_role === targetRole
+      ) {
+        nextOwnerId = targetActivity.responsible_user_id;
+        nextOwnerName = targetActivity.responsible_user_name || nextOwnerName;
+      }
+
       const inRangeStages = stages.filter(
         (s) =>
           s.stage_order >= targetStage.stage_order &&
@@ -513,19 +631,23 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
           (a) => a.stage_name === s.stage_name,
         );
         const isTarget = s.stage_order === targetStage.stage_order;
-
         const resetData = isTarget
           ? {
               status: "In_Progress",
               started_at: now,
               completed_at: null,
               comments: `Returned for correction: ${returnComments}`,
+              responsible_role: targetRole,
+              responsible_user_id: nextOwnerId,
+              responsible_user_name: nextOwnerName,
             }
           : {
               status: "Pending",
               started_at: null,
               completed_at: null,
               comments: null,
+              responsible_user_id: null,
+              responsible_user_name: null,
             };
 
         if (existingActivity) {
@@ -547,6 +669,14 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         workflow_stage_order: targetStage.stage_order,
         current_department: targetStage.department,
         status: "Returned_for_Correction",
+        current_owner_id: nextOwnerId,
+        current_owner_name: nextOwnerName,
+        current_approver_role:
+          targetRole === "claim_manager"
+            ? "Claim_Manager"
+            : targetRole === "principal_claim_officer"
+              ? "Principal_of_Claim"
+              : "None",
       });
 
       await api.post("/claim-actions", {
@@ -557,10 +687,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         action_by_role: ROLE_LABELS[user.role] || user.role,
         comments: `Returned from "${returningStage.stage_name}" to "${targetStage.stage_name}": ${returnComments}`,
       });
-
-      const targetRoleLabel =
-        ROLE_LABELS[targetStage.responsible_role] ||
-        targetStage.responsible_role;
 
       try {
         const recipients = await findApproversByRoleAndLocation(
@@ -585,9 +711,8 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
 
       toast({
         title: "Claim returned",
-        description: `Sent back to "${targetStage.stage_name}" (${targetRoleLabel}).`,
+        description: `Sent back to "${targetStage.stage_name}".`,
       });
-
       setReturnModalOpen(false);
       setReturningStage(null);
       setReturnTargetOrder("");
@@ -607,27 +732,33 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
 
   const isAssignmentStage =
     actionModal?.stage && isAdjusterAssignStage(actionModal.stage.stage_name);
-
   const isPrincipalAssignStage =
     actionModal?.stage &&
     isPrincipalAssignStageName(actionModal.stage.stage_name);
 
-  // Is this the tier decision UI relevant for the current modal?
-  const modalTierEntry =
-    actionModal?.stage &&
-    findTierEntry(CLAIM_DIVISION_APPROVAL_TIER, actionModal.stage.stage_name);
+  const modalCurrentRole = actionModal?.stage
+    ? currentRoleForActivity(actionModal.stage, actionModal.activity)
+    : null;
   const showTierChoice =
     actionModal?.newStatus === "Completed" &&
-    modalTierEntry &&
-    !isLastTierStage(
-      CLAIM_DIVISION_APPROVAL_TIER,
-      actionModal.stage.stage_name,
-    );
-  const nextTier = actionModal?.stage
-    ? nextTierEntry(CLAIM_DIVISION_APPROVAL_TIER, actionModal.stage.stage_name)
-    : null;
+    actionModal?.stage &&
+    isEscalationStage(actionModal.stage.stage_name) &&
+    !isLastInChain(actionModal.stage.stage_name, modalCurrentRole);
+  const nextRole =
+    actionModal?.stage && modalCurrentRole
+      ? nextRoleInChain(actionModal.stage.stage_name, modalCurrentRole)
+      : null;
 
   const handleAction = async () => {
+    if (!actionModal) return;
+    if (isTerminal) {
+      toast({
+        title: "Claim rejected",
+        description: "No further stage actions.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!actionModal) return;
 
     if (isAssignmentStage && !selectedAdjusterId) {
@@ -646,20 +777,108 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       const uiStatus = actionModal.newStatus;
       const prismaStatus = toPrismaStatus(uiStatus);
       const now = new Date().toISOString();
-
       const actorName = actingUserName || user.full_name || null;
 
       if (!actorName || String(actorName).includes("@")) {
         toast({
           title: "Name not loaded",
-          description:
-            "Your staff first/middle name is missing. Fix Staff profile or wait for name to load.",
+          description: "Your staff first/middle name is missing.",
           variant: "destructive",
         });
         setProcessing(false);
         return;
       }
-      let registrationData = { ...(existing?.registration_data || {}) };
+
+      // ---- FORWARD within the same stage (escalation, not stage change) ----
+      if (
+        uiStatus === "Completed" &&
+        showTierChoice &&
+        completionChoice === "forward"
+      ) {
+        const next = nextRoleInChain(stage.stage_name, modalCurrentRole);
+        const approvals = [
+          ...(stageData?.approvals || []),
+          {
+            role: modalCurrentRole,
+            role_label: ROLE_LABELS[modalCurrentRole] || modalCurrentRole,
+            name: actorName,
+            at: now,
+            comments,
+          },
+        ];
+        const updatedRegData = { ...stageData, approvals };
+
+        if (existing) {
+          await api.put(`/claim-activities/${existing.id}`, {
+            status: "In_Progress",
+            responsible_role: next,
+            responsible_user_id: null,
+            responsible_user_name: null,
+            registration_data: updatedRegData,
+            comments,
+          });
+        } else {
+          await api.post("/claim-activities", {
+            claim_id: claim.id,
+            claim_reference: claim.claim_reference,
+            stage_name: stage.stage_name,
+            stage_order: stage.stage_order,
+            status: "In_Progress",
+            responsible_role: next,
+            department: stage.department,
+            registration_data: updatedRegData,
+            started_at: now,
+            comments,
+          });
+        }
+
+        await api.post("/claim-actions", {
+          claim_id: claim.id,
+          action_type: "Forwarded",
+          action_by_id: user.id,
+          action_by_name: actorName,
+          action_by_role: ROLE_LABELS[user.role] || user.role,
+          comments: `${comments ? `${comments} · ` : ""}Forwarded "${stage.stage_name}" to ${ROLE_LABELS[next] || next}`,
+        });
+
+        await api.put(`/claims/${claim.id}`, {
+          current_approver_role: ROLE_LABELS[next] || next,
+        });
+
+        try {
+          const recipients = await findApproversByRoleAndLocation(next, claim);
+          await Promise.all(
+            recipients.slice(0, 5).map((u) =>
+              api.post("/notifications", {
+                user_id: u.id,
+                claim_id: claim.id,
+                claim_reference: claim.claim_reference,
+                title: `Action needed: ${stage.stage_name}`,
+                message: `${actorName} forwarded "${stage.stage_name}" on claim ${claim.claim_reference} to you as ${ROLE_LABELS[next] || next}.`,
+                type: "approval_required",
+              }),
+            ),
+          );
+        } catch {
+          // notification failure shouldn't block forwarding
+        }
+
+        toast({
+          title: "Forwarded",
+          description: `${stage.stage_name} forwarded to ${ROLE_LABELS[next] || next}.`,
+        });
+        setActionModal(null);
+        setComments("");
+        setStageData({});
+        setCompletionChoice("forward");
+        await loadData();
+        if (onActivityUpdated) onActivityUpdated();
+        setProcessing(false);
+        return;
+      }
+
+      // ---- NORMAL COMPLETION path (non-escalation stage, or Finalize, or last-in-chain) ----
+      let registrationData = { ...stageData };
 
       if (isAssignmentStage) {
         registrationData = {
@@ -672,7 +891,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             "",
         };
       }
-
       if (isPrincipalAssignStage) {
         const principal = principals.find((p) => p.id === selectedPrincipalId);
         registrationData = {
@@ -683,13 +901,27 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
           manager_comments: comments || "",
         };
       }
+      if (isEscalationStage(stage.stage_name) && uiStatus === "Completed") {
+        registrationData.approvals = [
+          ...(registrationData.approvals || []),
+          {
+            role: modalCurrentRole,
+            role_label: ROLE_LABELS[modalCurrentRole] || modalCurrentRole,
+            name: actorName,
+            at: now,
+            comments,
+          },
+        ];
+      }
 
       const activityData = {
         status: prismaStatus,
         comments: comments || existing?.comments || "",
         responsible_user_id: user.id,
         responsible_user_name: actorName,
-        responsible_role: user.role,
+        responsible_role: isEscalationStage(stage.stage_name)
+          ? modalCurrentRole
+          : user.role,
         department: stage.department,
         registration_data: registrationData,
         started_at:
@@ -723,20 +955,15 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
 
       await api.post("/claim-actions", {
         claim_id: claim.id,
-        action_type:
-          prismaStatus === "Completed"
-            ? "Forwarded"
-            : prismaStatus === "In_Progress"
-              ? "Comment"
-              : "Comment",
+        action_type: prismaStatus === "Completed" ? "Approved" : "Comment",
         action_by_id: user.id,
         action_by_name: actorName,
         action_by_role: ROLE_LABELS[user.role] || user.role,
         comments:
           (comments ? `${comments} · ` : "") +
           `${uiStatus}: ${stage.stage_name}` +
-          (showTierChoice
-            ? ` · ${completionChoice === "finalize" ? "Finalized (no further sign-off)" : `Forwarded to ${nextTier ? ROLE_LABELS[nextTier.role] || nextTier.role : "next level"}`}`
+          (showTierChoice && completionChoice === "finalize"
+            ? " · Finalized (no further sign-off)"
             : "") +
           (isPrincipalAssignStage && principalName
             ? ` · Principal: ${principalName}`
@@ -746,128 +973,135 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             : ""),
       });
 
+      if (
+        prismaStatus === "Completed" &&
+        (stage.stage_name === "Claim Receipt & Registration" ||
+          stage.stage_name === "Approval Case Registration")
+      ) {
+        const rd = registrationData;
+        const toBool = (v) => v === true || v === "Yes" || v === "yes";
+        const classOfBusiness = rd.class_of_business || claim.insurance_type;
+        const isMotor = classOfBusiness === "Motor";
+
+        await api.put(`/claims/${claim.id}`, {
+          claim_reference: rd.claim_reference || claim.claim_reference,
+          claimant_name: rd.insured_name || claim.claimant_name,
+          insurance_type: classOfBusiness || claim.insurance_type,
+          plate_number: isMotor ? rd.plate_number || null : claim.plate_number,
+          originating_office:
+            rd.district_branch_name || claim.originating_office,
+          date_received:
+            rd.notification_received_date || claim.date_received || null,
+          ...(stage.stage_name === "Approval Case Registration" && {
+            is_subrogation: toBool(rd.is_subrogation),
+            is_recovery: toBool(rd.is_recovery),
+            is_reinsurance: toBool(rd.is_reinsurance),
+          }),
+        });
+      }
+
       if (prismaStatus === "Completed") {
-        let nextStage = stages.find((s) => s.stage_order > stage.stage_order);
-
-        const tierEntry = findTierEntry(
-          CLAIM_DIVISION_APPROVAL_TIER,
-          stage.stage_name,
-        );
-        const isTierDecision =
-          tierEntry &&
-          !isLastTierStage(CLAIM_DIVISION_APPROVAL_TIER, stage.stage_name);
-        const shouldSkip = isTierDecision && completionChoice === "finalize";
-
-        if (shouldSkip) {
-          const tierNames = new Set(
-            CLAIM_DIVISION_APPROVAL_TIER.map((t) =>
-              normalizeStageName(t.stage_name),
-            ),
-          );
-          const remainingTierStages = stages.filter(
-            (s) =>
-              s.stage_order > stage.stage_order &&
-              tierNames.has(normalizeStageName(s.stage_name)),
-          );
-
-          for (const skipStage of remainingTierStages) {
-            const existingActivity = activities.find(
-              (a) => a.stage_name === skipStage.stage_name,
-            );
-            const skipData = {
-              status: "Skipped",
-              comments: `Skipped — ${
-                ROLE_LABELS[user.role] || user.role
-              } approved and finalized without further sign-off.`,
-            };
-            if (existingActivity) {
-              await api.put(
-                `/claim-activities/${existingActivity.id}`,
-                skipData,
-              );
-            } else {
-              await api.post("/claim-activities", {
-                claim_id: claim.id,
-                claim_reference: claim.claim_reference,
-                stage_name: skipStage.stage_name,
-                stage_order: skipStage.stage_order,
-                department: skipStage.department,
-                ...skipData,
-              });
-            }
-          }
-
-          const maxTierOrder = Math.max(
-            stage.stage_order,
-            ...remainingTierStages.map((s) => s.stage_order),
-          );
-          nextStage = stages.find((s) => s.stage_order > maxTierOrder);
-        }
+        const nextStage = stages
+          .filter((s) => s.stage_order > stage.stage_order)
+          .sort((a, b) => a.stage_order - b.stage_order)[0];
 
         const isFinalStage = !nextStage;
-        const claimHasFinalStatus = ["Approved", "Rejected"].includes(
-          claim.status,
-        );
-
+        const claimHasFinalStatus = [
+          "Approved",
+          "Rejected",
+          "Claim_Closed",
+        ].includes(claim.status);
         const mappedStatus = statusForCompletedStage(
           stage.stage_name,
           "Claim_Division",
           claim.status,
         );
 
-        const claimUpdates = {
-          workflow_stage: stage.stage_name,
-          workflow_stage_order: stage.stage_order,
-          current_owner_id: user.id,
-          current_owner_name: actorName,
-          current_department: stage.department,
-          ...(!claimHasFinalStatus && {
-            status: mappedStatus,
-            ...(isFinalStage && { closure_date: now }),
-          }),
-        };
+        const completedByRole = ROLE_LABELS[user.role] || user.role;
 
+        // Assignment stages: owner becomes selected principal / adjuster
         if (isAssignmentStage && selectedAdjusterId) {
           const adjuster = adjusters.find((a) => a.id === selectedAdjusterId);
-          claimUpdates.assigned_performer_id = selectedAdjusterId;
-          claimUpdates.assigned_performer_name =
-            adjuster?.full_name || adjuster?.email || "";
-          claimUpdates.assignment_date = new Date().toISOString().slice(0, 10);
-          claimUpdates.current_owner_id = selectedAdjusterId;
-          claimUpdates.current_owner_name =
-            adjuster?.full_name || adjuster?.email || "";
-        }
-
-        if (isPrincipalAssignStage && selectedPrincipalId) {
+          await api.put(`/claims/${claim.id}`, {
+            workflow_stage: nextStage?.stage_name || stage.stage_name,
+            workflow_stage_order: nextStage?.stage_order || stage.stage_order,
+            assigned_performer_id: selectedAdjusterId,
+            assigned_performer_name:
+              adjuster?.full_name || adjuster?.email || "",
+            assignment_date: new Date().toISOString().slice(0, 10),
+            current_owner_id: selectedAdjusterId,
+            current_owner_name: adjuster?.full_name || adjuster?.email || "",
+            current_department: nextStage?.department || stage.department,
+            current_approver_role: "None",
+            ...(!claimHasFinalStatus && { status: mappedStatus }),
+          });
+        } else if (isPrincipalAssignStage && selectedPrincipalId) {
           const principal = principals.find(
             (p) => p.id === selectedPrincipalId,
           );
-          claimUpdates.current_owner_id = selectedPrincipalId;
-          claimUpdates.current_owner_name =
-            principal?.full_name || principal?.email || "";
-        }
+          await api.put(`/claims/${claim.id}`, {
+            workflow_stage: nextStage?.stage_name || stage.stage_name,
+            workflow_stage_order: nextStage?.stage_order || stage.stage_order,
+            current_owner_id: selectedPrincipalId,
+            current_owner_name: principal?.full_name || principal?.email || "",
+            current_department: nextStage?.department || stage.department,
+            current_approver_role: "None",
+            ...(!claimHasFinalStatus && { status: mappedStatus }),
+          });
+        } else if (nextStage) {
+          // Normal advance: next owner = next stage's responsible_role (e.g. claim_manager)
+          const nextRole = nextStage.responsible_role;
+          const nextRoleLabel = ROLE_LABELS[nextRole] || nextRole;
 
-        await api.put(`/claims/${claim.id}`, claimUpdates);
+          let nextOwnerId = null;
+          let nextOwnerName = null;
+          let recipients = [];
+          try {
+            recipients = await findApproversByRoleAndLocation(nextRole, claim);
+            if (recipients[0]) {
+              nextOwnerId = recipients[0].id;
+              nextOwnerName =
+                recipients[0].full_name || recipients[0].email || null;
+            }
+          } catch {
+            recipients = [];
+          }
 
-        const completedByRole = ROLE_LABELS[user.role] || user.role;
+          await api.put(`/claims/${claim.id}`, {
+            workflow_stage: nextStage.stage_name,
+            workflow_stage_order: nextStage.stage_order,
+            current_department:
+              nextStage.department || claim.current_department,
+            current_owner_id: nextOwnerId,
+            current_owner_name: nextOwnerName,
+            current_approver_role:
+              nextRole === "claim_manager"
+                ? "Claim_Manager"
+                : nextRole === "principal_claim_officer"
+                  ? "Principal_of_Claim"
+                  : "None",
+            ...(!claimHasFinalStatus && { status: mappedStatus }),
+          });
 
-        if (nextStage) {
-          const nextRoleLabel =
-            ROLE_LABELS[nextStage.responsible_role] ||
-            nextStage.responsible_role;
-
-          let recipients = await findApproversByRoleAndLocation(
-            nextStage.responsible_role,
-            claim,
+          // Ensure next activity exists
+          const already = activities.find(
+            (a) => a.stage_name === nextStage.stage_name,
           );
-
-          if (!recipients.length) {
-            console.warn("No recipients for", nextStage.responsible_role);
-            toast({
-              title: "Stage completed",
-              description: `No users found with role ${nextRoleLabel} to notify.`,
+          if (!already) {
+            await api.post("/claim-activities", {
+              claim_id: claim.id,
+              claim_reference: claim.claim_reference,
+              stage_name: nextStage.stage_name,
+              stage_order: nextStage.stage_order,
+              status: "Pending",
+              responsible_role: nextRole,
+              department: nextStage.department,
+              responsible_user_id: nextOwnerId,
+              responsible_user_name: nextOwnerName,
             });
-          } else {
+          }
+
+          if (recipients.length) {
             await Promise.all(
               recipients.slice(0, 5).map((u) =>
                 api.post("/notifications", {
@@ -880,22 +1114,37 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                 }),
               ),
             );
+          } else {
+            toast({
+              title: "Stage completed",
+              description: `No users found with role ${nextRoleLabel} to assign/notify.`,
+            });
           }
-
+        } else {
+          // Final stage
           await api.put(`/claims/${claim.id}`, {
-            current_department: nextStage.department,
-            workflow_stage: nextStage.stage_name,
-            workflow_stage_order: nextStage.stage_order,
+            workflow_stage: stage.stage_name,
+            workflow_stage_order: stage.stage_order,
+            current_owner_id: user.id,
+            current_owner_name: actorName,
+            current_department: stage.department,
+            current_approver_role: "None",
+            ...(!claimHasFinalStatus && {
+              status: mappedStatus,
+              ...(isFinalStage && { closure_date: now }),
+            }),
           });
-        } else if (claim.submitted_by_id) {
-          await api.post("/notifications", {
-            user_id: claim.submitted_by_id,
-            claim_id: claim.id,
-            claim_reference: claim.claim_reference,
-            title: "Workflow Complete",
-            message: `All workflow stages for claim ${claim.claim_reference} have been completed by ${completedByRole}.`,
-            type: "claim_approved",
-          });
+
+          if (claim.submitted_by_id) {
+            await api.post("/notifications", {
+              user_id: claim.submitted_by_id,
+              claim_id: claim.id,
+              claim_reference: claim.claim_reference,
+              title: "Workflow Complete",
+              message: `All workflow stages for claim ${claim.claim_reference} have been completed by ${completedByRole}.`,
+              type: "claim_approved",
+            });
+          }
         }
       }
 
@@ -909,6 +1158,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       setSelectedAdjusterId("");
       setSelectedPrincipalId("");
       setCompletionChoice("forward");
+      setStageData({});
       await loadData();
       if (onActivityUpdated) onActivityUpdated();
     } catch (e) {
@@ -947,7 +1197,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         </CardHeader>
         <CardContent>
           <p className="text-xs text-muted-foreground mb-4">
-            Full claim flow — all stages visible. Only the responsible role can
+            Full claim flow — all stages visible. Only the current approver can
             act; others see a lock. Stages advance step by step.
           </p>
 
@@ -957,13 +1207,35 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             </p>
           ) : (
             <div className="space-y-0">
+              {claim.status === "Rejected" && (
+                <div className="mb-3 p-3 rounded-lg bg-red-50 border border-red-100 text-sm text-red-900">
+                  <p className="font-medium">Rejected</p>
+                  {claim.rejection_date && (
+                    <p className="text-xs mt-0.5">
+                      Date: {moment(claim.rejection_date).format("DD MMM YYYY")}
+                    </p>
+                  )}
+                  {claim.rejection_reason && (
+                    <p className="text-xs mt-1 italic">
+                      &quot;{claim.rejection_reason}&quot;
+                    </p>
+                  )}
+                  <p className="text-xs mt-1 text-muted-foreground">
+                    Stage history is kept. No Start / Complete / Return.
+                  </p>
+                </div>
+              )}
               {visibleStages.map((stage, i) => {
                 const activity = getActivityForStage(stage.stage_name);
                 const status = toDisplayStatus(activity?.status || "Pending");
                 const isLast = i === visibleStages.length - 1;
-                const myStage = isMyStage(stage);
+                const myStage = isMyStage(stage, activity);
                 const unlocked = canActOnStage(stage);
                 const isSkipped = status === "Skipped";
+                const escalation = isEscalationStage(stage.stage_name);
+                const currentRole = escalation
+                  ? currentRoleForActivity(stage, activity)
+                  : stage.responsible_role;
 
                 const icon =
                   status === "Completed" ? (
@@ -992,52 +1264,41 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                 return (
                   <div
                     key={stage.id || stage.stage_name}
-                    className={`flex gap-3 pb-3 relative ${
-                      myStage && unlocked
-                        ? "ring-1 ring-blue-200 rounded-lg p-2 -m-1"
-                        : ""
-                    } ${isSkipped ? "opacity-60" : ""}`}
+                    className={`flex gap-3 pb-3 relative ${myStage && unlocked ? "ring-1 ring-blue-200 rounded-lg p-2 -m-1" : ""} ${isSkipped ? "opacity-60" : ""}`}
                   >
                     {!isLast && (
                       <div
-                        className={`absolute left-[15px] top-8 bottom-0 w-0.5 ${
-                          status === "Completed"
-                            ? "bg-emerald-200"
-                            : "bg-border"
-                        }`}
+                        className={`absolute left-[15px] top-8 bottom-0 w-0.5 ${status === "Completed" ? "bg-emerald-200" : "bg-border"}`}
                       />
                     )}
-
                     <div
                       className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${bgColor}`}
                     >
                       {icon}
                     </div>
-
                     <div className="flex-1 min-w-0 pb-2">
                       <div className="flex items-center justify-between gap-2 flex-wrap">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span
-                            className={`text-sm font-medium ${
-                              isSkipped ? "line-through decoration-1" : ""
-                            }`}
-                            title={
-                              getStageDescription(stage.stage_name) ||
-                              stage.description
-                            }
+                            className={`text-sm font-medium ${isSkipped ? "line-through decoration-1" : ""}`}
+                            title={getStageDescription(stage.stage_name)}
                           >
                             {getStageLabel(stage.stage_name)}
                           </span>
                           <Badge
-                            className={`text-[10px] ${
-                              ACTIVITY_STATUS_COLORS[status] || ""
-                            }`}
+                            className={`text-[10px] ${ACTIVITY_STATUS_COLORS[status] || ""}`}
                           >
                             {status}
                           </Badge>
                           {myStage && (
                             <Badge className="text-[10px] bg-blue-100 text-blue-700">
                               Your Role
+                            </Badge>
+                          )}
+                          {escalation && status === "In Progress" && (
+                            <Badge className="text-[10px] bg-purple-100 text-purple-700">
+                              Awaiting:{" "}
+                              {ROLE_LABELS[currentRole] || currentRole}
                             </Badge>
                           )}
                           {!unlocked &&
@@ -1052,7 +1313,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
 
                         {status !== "Completed" && status !== "Skipped" && (
                           <div className="flex gap-1">
-                            {myStage && unlocked ? (
+                            {!isTerminal && myStage && unlocked ? (
                               <>
                                 {status === "Pending" && (
                                   <Button
@@ -1119,8 +1380,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                             ) : (
                               <span className="flex items-center gap-1 text-[10px] text-muted-foreground">
                                 <Lock className="w-3 h-3" />{" "}
-                                {ROLE_LABELS[stage.responsible_role] ||
-                                  stage.responsible_role}
+                                {ROLE_LABELS[currentRole] || currentRole}
                               </span>
                             )}
                           </div>
@@ -1129,12 +1389,16 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
 
                       <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground flex-wrap">
                         <span className="flex items-center gap-1">
-                          <User className="w-3 h-3" />
+                          <User className="w-3 h-3" />{" "}
                           {ROLE_LABELS[stage.responsible_role] ||
                             stage.responsible_role}
+                          {escalation &&
+                            ` → ${getEscalationChain(stage.stage_name)
+                              .map((r) => ROLE_LABELS[r] || r)
+                              .join(" → ")}`}
                         </span>
                         <span className="flex items-center gap-1">
-                          <Building2 className="w-3 h-3" />
+                          <Building2 className="w-3 h-3" />{" "}
                           {stage.department
                             ? stage.department.replace(/_/g, " ")
                             : "—"}
@@ -1182,7 +1446,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                             )}
                           </div>
                         )}
-
                       {isPrincipalAssignStageName(stage.stage_name) &&
                         activity?.registration_data
                           ?.principal_of_claim_name && (
@@ -1199,11 +1462,27 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                           </div>
                         )}
 
+                      {![
+                        "Claim Receipt & Registration",
+                        "Approval Case Registration",
+                      ].includes(stage.stage_name) && (
+                        <StageDataSummary
+                          stageName={stage.stage_name}
+                          data={activity?.registration_data}
+                        />
+                      )}
+                      {escalation && (
+                        <StageApprovalHistory
+                          approvals={activity?.registration_data?.approvals}
+                        />
+                      )}
+
                       {activity?.comments && (
                         <p className="text-xs text-muted-foreground mt-1 italic">
                           &quot;{activity.comments}&quot;
                         </p>
                       )}
+
                       {claim.insurance_type === "Motor" &&
                         isGarageSelectionStage(stage.stage_name) &&
                         (status === "In Progress" || status === "Pending") &&
@@ -1212,8 +1491,8 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                             to="/garages"
                             className="inline-flex items-center gap-1 mt-2 text-xs text-primary font-medium hover:underline"
                           >
-                            <Wrench className="w-3.5 h-3.5" />
-                            Open Garage Tracking
+                            <Wrench className="w-3.5 h-3.5" /> Open Garage
+                            Tracking
                           </Link>
                         )}
                     </div>
@@ -1234,6 +1513,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
           setSelectedAdjusterId("");
           setSelectedPrincipalId("");
           setCompletionChoice("forward");
+          setStageData({});
         }}
       >
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1252,13 +1532,20 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             <p className="text-sm text-muted-foreground">
               Claim <strong>{claim.claim_reference}</strong> ·{" "}
               {claim.insurance_type} · Stage {actionModal?.stage?.stage_order}
+              {isEscalationStage(actionModal?.stage?.stage_name || "") && (
+                <>
+                  {" "}
+                  · Acting as{" "}
+                  {ROLE_LABELS[modalCurrentRole] || modalCurrentRole}
+                </>
+              )}
             </p>
 
             {isAssignmentStage && (
               <div className="space-y-3 p-3 bg-blue-50/50 rounded-lg border border-blue-100">
                 <div className="flex items-center gap-2 text-sm font-medium">
-                  <FileText className="w-4 h-4 text-blue-600" />
-                  Assignment Details
+                  <FileText className="w-4 h-4 text-blue-600" /> Assignment
+                  Details
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <div className="space-y-1">
@@ -1302,8 +1589,8 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             {isPrincipalAssignStage && (
               <div className="space-y-3 p-3 bg-violet-50/50 rounded-lg border border-violet-100">
                 <div className="flex items-center gap-2 text-sm font-medium">
-                  <User className="w-4 h-4 text-violet-600" />
-                  Principal of Claim
+                  <User className="w-4 h-4 text-violet-600" /> Principal of
+                  Claim
                 </div>
                 <div className="space-y-1">
                   <Label className="text-xs">Select Principal of Claim</Label>
@@ -1317,7 +1604,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                     <SelectContent>
                       {principals.length === 0 ? (
                         <SelectItem value="_none" disabled>
-                          No principal officers found — check role name in Users
+                          No principal officers found
                         </SelectItem>
                       ) : (
                         principals.map((p) => (
@@ -1331,6 +1618,15 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                 </div>
               </div>
             )}
+
+            {actionModal?.stage &&
+              STAGE_FIELD_CONFIG[actionModal.stage.stage_name] && (
+                <StageRegistrationForm
+                  stageName={actionModal.stage.stage_name}
+                  value={stageData}
+                  onChange={setStageData}
+                />
+              )}
 
             {showTierChoice && (
               <div className="space-y-2 p-3 bg-amber-50/50 rounded-lg border border-amber-100">
@@ -1351,8 +1647,8 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                     <div>
                       <p className="text-sm font-medium">Approve & Finalize</p>
                       <p className="text-xs text-muted-foreground">
-                        No further sign-off needed — remaining approval stages
-                        will be skipped.
+                        No further sign-off needed — claim advances to the next
+                        business stage.
                       </p>
                     </div>
                   </button>
@@ -1369,19 +1665,20 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                     <div>
                       <p className="text-sm font-medium">
                         Forward to{" "}
-                        {nextTier
-                          ? ROLE_LABELS[nextTier.role] || nextTier.role
+                        {nextRole
+                          ? ROLE_LABELS[nextRole] || nextRole
                           : "next level"}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        This claim needs further review before it can be
-                        finalized.
+                        This stage stays open, awaiting sign-off from the next
+                        level.
                       </p>
                     </div>
                   </button>
                 </div>
               </div>
             )}
+
             {actionModal?.stage &&
               claim.insurance_type === "Motor" &&
               isGarageSelectionStage(actionModal.stage.stage_name) && (
@@ -1394,20 +1691,10 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                     to="/garages"
                     className="inline-flex items-center gap-1 text-primary font-medium hover:underline"
                   >
-                    <Wrench className="w-4 h-4" />
-                    Go to Garages
+                    <Wrench className="w-4 h-4" /> Go to Garages
                   </Link>
                 </div>
               )}
-            <div className="space-y-1.5">
-              <Label className="text-xs">Comments</Label>
-              <Textarea
-                value={comments}
-                onChange={(e) => setComments(e.target.value)}
-                rows={3}
-                placeholder="Add notes about this activity..."
-              />
-            </div>
           </div>
 
           <DialogFooter>
@@ -1420,6 +1707,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                 setSelectedAdjusterId("");
                 setSelectedPrincipalId("");
                 setCompletionChoice("forward");
+                setStageData({});
               }}
             >
               Cancel
@@ -1427,11 +1715,14 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             <Button onClick={handleAction} disabled={processing}>
               {processing
                 ? "Processing..."
-                : `Confirm ${actionModal?.newStatus}`}
+                : showTierChoice && completionChoice === "forward"
+                  ? "Confirm Forward"
+                  : `Confirm ${actionModal?.newStatus}`}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
       <Dialog
         open={returnModalOpen}
         onOpenChange={() => {
@@ -1447,14 +1738,12 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
               Return Claim — {getStageLabel(returningStage?.stage_name)}
             </DialogTitle>
           </DialogHeader>
-
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
               Claim <strong>{claim.claim_reference}</strong> will be sent back
               for correction. Every stage between your choice and this one will
               need to be redone.
             </p>
-
             <div className="space-y-1.5">
               <Label className="text-xs">
                 Return to which stage? <span className="text-red-500">*</span>
@@ -1477,7 +1766,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                 </SelectContent>
               </Select>
             </div>
-
             <div className="space-y-1.5">
               <Label className="text-xs">
                 Reason for return <span className="text-red-500">*</span>
@@ -1490,7 +1778,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
               />
             </div>
           </div>
-
           <DialogFooter>
             <Button
               variant="outline"

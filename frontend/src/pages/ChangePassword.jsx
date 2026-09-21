@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useNavigate, useSearchParams, Link } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import api from "@/api/api";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -38,12 +38,11 @@ function Rule({ ok, text }) {
 }
 
 export default function ChangePassword() {
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const forced =
     searchParams.get("forced") === "1" || searchParams.get("forced") === "true";
 
-  const { logout, checkUserAuth } = useAuth();
+  const { logout } = useAuth();
 
   const [form, setForm] = useState({
     currentPassword: "",
@@ -98,26 +97,26 @@ export default function ChangePassword() {
         newPassword: form.newPassword,
       });
 
-      // Backend must set must_change_password = false
+      toast.success(
+        forced
+          ? "Password updated. Please sign in with your new password."
+          : "Password changed successfully. Please sign in again.",
+      );
 
-      if (forced) {
-        // Force re-login with new password (safest)
-        toast.success(
-          "Password updated. Please sign in with your new password.",
-        );
+      // Always clear session
+      try {
         clearSession?.();
-        localStorage.removeItem("token");
-        localStorage.removeItem("user");
-        logout?.(false);
-        navigate("/login", { replace: true });
-      } else {
-        toast.success("Password changed successfully");
-        await checkUserAuth?.();
-        navigate("/profile", { replace: true });
+      } catch {
+        /* ignore */
       }
+      localStorage.removeItem("token");
+      localStorage.removeItem("user");
+      logout?.(false);
+
+      // Hard redirect — same as logout(true)
+      window.location.replace("/login");
     } catch (err) {
       setError(getApiErrorMessage(err, "Failed to change password"));
-    } finally {
       setSaving(false);
     }
   };

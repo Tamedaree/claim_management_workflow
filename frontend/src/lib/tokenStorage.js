@@ -1,35 +1,32 @@
-// Centralized session storage.
-//
-// Default: sessionStorage — cleared when the tab/browser closes.
-// "Remember me" checked at login: localStorage — persists across restarts.
-//
-// Every other file should go through these helpers instead of touching
-// localStorage/sessionStorage directly, so there's one source of truth
-// for where the session actually lives.
-
 const TOKEN_KEY = "token";
 const USER_KEY = "user";
 
 export function setSession(token, user, remember = false) {
-  // Clear both stores first so a stale copy never lingers in the
-  // non-active storage (e.g. switching from "remember me" on to off).
+  // Always one shared session for the whole browser
   sessionStorage.removeItem(TOKEN_KEY);
   sessionStorage.removeItem(USER_KEY);
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
 
-  const store = remember ? localStorage : sessionStorage;
-  if (token) store.setItem(TOKEN_KEY, token);
-  if (user) store.setItem(USER_KEY, JSON.stringify(user));
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  if (user) localStorage.setItem(USER_KEY, JSON.stringify(user));
+
+  // Optional: only "remember" changes expiry on the server later;
+  // for now both paths use localStorage so tabs share one login.
+  if (!remember) {
+    // optional flag if you want UI to know
+    localStorage.setItem("remember_me", "0");
+  } else {
+    localStorage.setItem("remember_me", "1");
+  }
 }
 
 export function getToken() {
-  return sessionStorage.getItem(TOKEN_KEY) || localStorage.getItem(TOKEN_KEY);
+  return localStorage.getItem(TOKEN_KEY);
 }
 
 export function getUser() {
-  const raw =
-    sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY);
+  const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -38,20 +35,12 @@ export function getUser() {
   }
 }
 
-// Merges partial fields into whichever storage currently holds the
-// session (session or local), preserving the user's "remember me" choice.
 export function updateStoredUser(partialUser) {
-  const activeStore = sessionStorage.getItem(TOKEN_KEY)
-    ? sessionStorage
-    : localStorage.getItem(TOKEN_KEY)
-      ? localStorage
-      : null;
-
-  if (!activeStore) return;
-
   const existing = getUser() || {};
-  const merged = { ...existing, ...partialUser };
-  activeStore.setItem(USER_KEY, JSON.stringify(merged));
+  localStorage.setItem(
+    USER_KEY,
+    JSON.stringify({ ...existing, ...partialUser }),
+  );
 }
 
 export function clearSession() {
@@ -59,4 +48,5 @@ export function clearSession() {
   sessionStorage.removeItem(USER_KEY);
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  localStorage.removeItem("remember_me");
 }

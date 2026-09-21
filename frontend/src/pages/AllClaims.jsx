@@ -4,6 +4,8 @@ import api from "@/api/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -29,6 +31,13 @@ import {
   AlertDialogAction,
   AlertDialogCancel,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { useToast } from "@/components/ui/use-toast";
 import {
   FileText,
@@ -41,6 +50,7 @@ import {
   ArrowUp,
   ArrowDown,
   ArrowUpDown,
+  XCircle,
 } from "lucide-react";
 import { exportToExcel, exportToPDF } from "@/lib/exportUtils";
 import {
@@ -158,6 +168,24 @@ function SortHeader({
   );
 }
 
+const canEditClaim = (role) =>
+  [
+    "claim_manager",
+    "gio_claim_manager",
+    "director",
+    "senior_director",
+    "chief_of_gio",
+    "ceo",
+    "admin",
+  ].includes(role);
+
+const canRejectClaim = (role) =>
+  ["director", "senior_director", "chief_of_gio", "ceo", "admin"].includes(
+    role,
+  );
+
+const canDeleteClaim = (role) => role === "admin";
+
 export default function AllClaims() {
   const { user } = useOutletContext() || {};
   const { toast } = useToast();
@@ -173,6 +201,12 @@ export default function AllClaims() {
   const [page, setPage] = useState(1);
   const [sortKey, setSortKey] = useState("createdAt");
   const [sortDir, setSortDir] = useState("desc");
+  const [rejectClaim, setRejectClaim] = useState(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejectDate, setRejectDate] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [rejecting, setRejecting] = useState(false);
 
   const toggleSort = (key) => {
     if (sortKey === key) {
@@ -331,6 +365,53 @@ export default function AllClaims() {
       });
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const confirmReject = async () => {
+    if (!rejectClaim) return;
+    if (!rejectReason.trim()) {
+      toast({
+        title: "Reason required",
+        description: "Enter why this claim/case is rejected.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setRejecting(true);
+    try {
+      await api.put(`/claims/${rejectClaim.id}`, {
+        status: "Rejected",
+        rejection_reason: rejectReason.trim(),
+        rejection_date: rejectDate
+          ? new Date(rejectDate).toISOString()
+          : new Date().toISOString(),
+        current_approver_role: "None",
+        current_approver_id: null,
+      });
+      await api.post("/claim-actions", {
+        claim_id: rejectClaim.id,
+        action_type: "Rejected",
+        action_by_id: user.id,
+        action_by_name: user.full_name || user.email,
+        action_by_role: user.role,
+        comments: rejectReason.trim(),
+      });
+      toast({
+        title: "Claim rejected",
+        description: rejectClaim.claim_reference,
+      });
+      setRejectClaim(null);
+      setRejectReason("");
+      loadClaims();
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: e.response?.data?.message || "Reject failed",
+        variant: "destructive",
+      });
+    } finally {
+      setRejecting(false);
     }
   };
 
@@ -775,24 +856,55 @@ export default function AllClaims() {
                               <Eye className="w-4 h-4" />
                             </Link>
                           </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            title="Edit"
-                            onClick={() => setEditClaim(claim)}
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8 text-red-600 hover:text-red-700"
-                            title="Delete"
-                            onClick={() => setDeleteClaim(claim)}
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+
+                          {canEditClaim(user?.role) &&
+                            claim.status !== "Rejected" && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8"
+                                title="Edit"
+                                onClick={() => setEditClaim(claim)}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </Button>
+                            )}
+
+                          {canRejectClaim(user?.role) &&
+                            ![
+                              "Rejected",
+                              "Claim_Closed",
+                              "Closed",
+                              "Completed",
+                            ].includes(claim.status) && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8 text-red-600 hover:text-red-700"
+                                title="Reject"
+                                onClick={() => {
+                                  setRejectClaim(claim);
+                                  setRejectReason("");
+                                  setRejectDate(
+                                    new Date().toISOString().slice(0, 10),
+                                  );
+                                }}
+                              >
+                                <XCircle className="w-4 h-4" />
+                              </Button>
+                            )}
+
+                          {canDeleteClaim(user?.role) && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8 text-red-600 hover:text-red-700"
+                              title="Delete"
+                              onClick={() => setDeleteClaim(claim)}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
@@ -869,6 +981,51 @@ export default function AllClaims() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <Dialog
+        open={!!rejectClaim}
+        onOpenChange={(v) => !v && setRejectClaim(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject claim / case</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Reject <strong>{rejectClaim?.claim_reference}</strong>. Workflow
+            history stays; no further stage actions.
+          </p>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <Label className="text-xs">Rejection date *</Label>
+              <Input
+                type="date"
+                value={rejectDate}
+                onChange={(e) => setRejectDate(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Reason *</Label>
+              <Textarea
+                rows={3}
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="Reason for rejection..."
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectClaim(null)}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-red-600 hover:bg-red-700"
+              disabled={rejecting}
+              onClick={confirmReject}
+            >
+              {rejecting ? "Rejecting..." : "Confirm Reject"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

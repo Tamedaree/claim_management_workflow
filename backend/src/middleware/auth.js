@@ -16,6 +16,7 @@ export const protect = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
     const user = await prisma.user.findUnique({
       where: { id: decoded.id },
       select: {
@@ -27,6 +28,7 @@ export const protect = async (req, res, next) => {
         is_active: true,
         phone: true,
         position_title: true,
+        session_id: true, // ← add
       },
     });
 
@@ -34,11 +36,16 @@ export const protect = async (req, res, next) => {
       throw new ApiError(401, "User not found or inactive");
     }
 
+    // One active session only
+    if (!decoded.sessionId || decoded.sessionId !== user.session_id) {
+      throw new ApiError(401, "Session expired. Please log in again.");
+    }
+
     req.user = user;
-    setAuditActor(user); // add this line right after
-    console.log("[protect] set actor:", user?.id); // temporary debug line
+    setAuditActor(user);
     next();
   } catch (error) {
+    if (error instanceof ApiError) return next(error);
     next(new ApiError(401, "Not authorized"));
   }
 };

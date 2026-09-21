@@ -279,6 +279,7 @@ export default function ClaimDetail() {
   const userIsApprover = isApprovalRole(user?.role);
 
   const canTakeAction =
+    claim?.status !== "Rejected" &&
     userIsApprover &&
     isCurrentApprover &&
     [
@@ -360,6 +361,7 @@ export default function ClaimDetail() {
         updates = {
           status: "Rejected",
           rejection_date: new Date().toISOString(),
+          rejection_reason: comments.trim(), // required
           current_approver_role: "None",
           current_approver_id: null,
         };
@@ -608,6 +610,26 @@ export default function ClaimDetail() {
         </p>
       </div>
 
+      {claim.status === "Rejected" && (
+        <Card className="border-0 shadow-sm border-l-4 border-l-red-500 bg-red-50/80">
+          <CardContent className="p-4 space-y-1">
+            <p className="text-sm font-semibold text-red-900">Claim rejected</p>
+            <p className="text-xs text-red-800">
+              Date:{" "}
+              {claim.rejection_date
+                ? moment(claim.rejection_date).format("DD MMM YYYY")
+                : "—"}
+            </p>
+            <p className="text-sm text-red-900">
+              {claim.rejection_reason || "No reason recorded."}
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              Workflow history is kept. Stage actions are disabled.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Claim Division — complete registration (claim adjuster) */}
       {claim.workflow_type === "Claim_Division" &&
         claim.registration_complete === false &&
@@ -638,15 +660,19 @@ export default function ClaimDetail() {
         )}
 
       {/* Details */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-stretch">
+        <Card className="border-0 shadow-sm h-full">
+          <CardHeader className="pb-2 pt-4 px-4">
             <CardTitle className="text-sm">Claim Details</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 text-sm">
+          <CardContent className="px-4 pb-4 pt-0 space-y-2.5 text-sm">
             <div className="flex justify-between">
-              <span className="text-muted-foreground">Policy Number</span>
-              <span className="font-medium">{claim.policy_number || "—"}</span>
+              <span className="text-muted-foreground">Notification Date</span>
+              <span className="font-medium">
+                {claim.date_received
+                  ? moment(claim.date_received).format("DD MMM YYYY, HH:mm")
+                  : "—"}
+              </span>
             </div>
 
             {(claim.insurance_type === "Motor" || claim.plate_number) && (
@@ -658,14 +684,6 @@ export default function ClaimDetail() {
               </div>
             )}
 
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Incident Date</span>
-              <span className="font-medium">
-                {claim.incident_date
-                  ? moment(claim.incident_date).format("DD MMM YYYY")
-                  : "—"}
-              </span>
-            </div>
             <div className="flex justify-between">
               <span className="text-muted-foreground">Forwarding Office</span>
               <span className="font-medium">
@@ -686,15 +704,6 @@ export default function ClaimDetail() {
                   : "—"}
               </span>
             </div>
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Current Responsible</span>
-              <span className="font-medium">
-                {claim.current_approver_role &&
-                claim.current_approver_role !== "None"
-                  ? claim.current_approver_role.replace(/_/g, " ")
-                  : "—"}
-              </span>
-            </div>
             {claim.workflow_type === "Claim_Division" && (
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Registration</span>
@@ -707,12 +716,42 @@ export default function ClaimDetail() {
             )}
           </CardContent>
         </Card>
-
+        <Card className="border-0 shadow-sm">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm">
+              Basic Information of Claim
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm space-y-3">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Policy Number</span>
+              <span className="font-medium">{claim.policy_number || "—"}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Claim Reference</span>
+              <span className="font-medium">
+                {claim.claim_reference || "—"}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Claim Number</span>
+              <span className="font-medium">{claim.claim_number || "—"}</span>
+            </div>
+          </CardContent>
+        </Card>
         <Card className="border-0 shadow-sm">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm">Description & Remarks</CardTitle>
           </CardHeader>
           <CardContent className="text-sm space-y-3">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Incident Date</span>
+              <span className="font-medium">
+                {claim.incident_date
+                  ? moment(claim.incident_date).format("DD MMM YYYY")
+                  : "—"}
+              </span>
+            </div>
             <div>
               <p className="text-xs text-muted-foreground mb-1">
                 Incident Description
@@ -730,7 +769,7 @@ export default function ClaimDetail() {
       </div>
 
       {claim.workflow_type === "GIO_Approval" && (
-        <Card className="border-0 shadow-sm overflow-hidden border border-purple-100/80 bg-gradient-to-br from-purple-50/40 via-background to-background">
+        <Card className="border-0 shadow-sm overflow-hidden border-purple-100/80 bg-gradient-to-br from-purple-50/40 via-background to-background">
           <CardHeader className="pb-3 border-b border-purple-100/60">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <CardTitle className="text-sm font-semibold tracking-tight flex items-center gap-2">

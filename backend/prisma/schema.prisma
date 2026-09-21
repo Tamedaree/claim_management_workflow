@@ -100,7 +100,7 @@ enum GioCaseReason {
 }
 
 enum ClaimStatus {
-  // Shared / legacy — still used by draft-save and "request info" flows
+  // Shared / legacy
   Draft
   Submitted
   Under_Review
@@ -108,41 +108,23 @@ enum ClaimStatus {
   Escalated
   Additional_Info_Requested
 
-  // Claim Division granular statuses
+  // Claim Division (stage-mapped)
   Notification_Received
   Claim_Registered
   Pending_Assignment
-  Assigned_to_Principal_of_Claim
   Assigned_to_Claim_Adjuster
-  Underwriting_Verification
-  Survey_Requested
   Survey_in_Progress
-  Damage_Assessment_Completed
-  Principal_Review_Pending
-  Proforma_Collection
-  Tender_Analysis_Pending
-  Garage_Selection_Pending
-  Re_bid_Pending
-  Independent_Assessment_Pending
-  Work_Order_Review_Pending
+  Bid_Tender_in_Progress
+  Decision_Pending
+  Work_Order_Pending
   Work_Order_Approved
-  Repair_in_Progress
-  Repair_Approval_Pending
-  Repair_Approved
-  Salvage_Pending
-  Satisfaction_Pending
   Payment_Preparation
-  Payment_Review_Pending
-  Payment_Approval_Pending
-  Payment_Document_Approved
-  Forwarded_to_Finance
-  Payment_Pending
-  Payment_Completed
+  Payment_Approved
   Claim_Closed
   Returned_for_Correction
   Escalated_to_GIO
-  
-// ===== GIO case statuses =====
+
+  // GIO case statuses
   Case_Received
   Pending_GIO_Assignment
   Director_Assignment_Pending
@@ -159,7 +141,7 @@ enum ClaimStatus {
   Completed
   Closed
 
-  // Shared terminal statuses
+  // Shared terminal
   Approved
   Rejected
 }
@@ -298,6 +280,7 @@ model User {
   must_change_password Boolean        @default(false)
   failed_login_attempts Int           @default(0)
   locked_until       DateTime?
+  session_id         String?
   department         Department?
   work_location      String?
   phone              String?
@@ -364,6 +347,7 @@ model Claim {
   submitted_by_name          String?
   submission_date            DateTime?
   approval_date               DateTime?
+  rejection_reason            String?
   rejection_date              DateTime?
   remarks                     String?
   documents                   String[]
@@ -512,7 +496,10 @@ model WorkflowStage {
   stage_order                Int
   responsible_role           Role
   workflow_type              WorkflowStageType    @default(Claim_Division)
+  workflow_stream            String?              @default("New_Claim")
   applicable_insurance_types String[]
+  applicable_office_types    String[]             @default([])
+  sla_days                   Int?
   department                 WorkflowDepartment?
   is_active                  Boolean              @default(true)
   is_configurable            Boolean              @default(true)
