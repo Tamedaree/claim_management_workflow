@@ -3,10 +3,11 @@ import ApiError from "../utils/ApiError.js";
 
 export const getWorkflowStages = async (req, res, next) => {
   try {
-    const { workflow_type, department, is_active, responsible_role } =
+    const { workflow_type, workflow_stream, department, is_active, responsible_role } =
       req.query;
     const where = {};
     if (workflow_type) where.workflow_type = workflow_type;
+    if (workflow_stream) where.workflow_stream = workflow_stream;
     if (department) where.department = department;
     if (is_active !== undefined) where.is_active = is_active === "true";
     if (responsible_role) where.responsible_role = responsible_role;
@@ -42,6 +43,7 @@ export const createWorkflowStage = async (req, res, next) => {
       stage_order,
       responsible_role,
       workflow_type,
+      workflow_stream,
       applicable_insurance_types,
       applicable_office_types,
       sla_days,
@@ -64,6 +66,7 @@ export const createWorkflowStage = async (req, res, next) => {
         stage_order: Number(stage_order),
         responsible_role,
         workflow_type: workflow_type || "Claim_Division",
+        workflow_stream: workflow_stream || "New_Claim",
         applicable_insurance_types: applicable_insurance_types || [],
         applicable_office_types: applicable_office_types || [],
         sla_days:
