@@ -59,6 +59,10 @@ import {
   ROLE_HIERARCHY,
   getWorkflowScopeForRole,
 } from "@/lib/roleConfig";
+import {
+  buildGioMonitoring,
+  buildGioPerformance,
+} from "@/lib/gioReportMetrics";
 
 const PAGE_SIZE = 50;
 
@@ -238,6 +242,15 @@ export default function Reports() {
   const [streamChoice, setStreamChoice] = useState("Claim_Division");
   const stream = canSwitch ? streamChoice : scope;
 
+  const effectiveReportType =
+    stream === "GIO_Approval"
+      ? reportType === "gio_performance"
+        ? "gio_performance"
+        : "gio_monitoring"
+      : reportType === "gio_monitoring" || reportType === "gio_performance"
+        ? "tracking"
+        : reportType;
+
   const streamClaims = useMemo(() => {
     return claims.filter((c) => {
       if (stream === "all") return true;
@@ -248,6 +261,24 @@ export default function Reports() {
   const filtered = useMemo(
     () => streamClaims.filter((c) => inPeriod(c, period)),
     [streamClaims, period],
+  );
+
+  const gioClaims = useMemo(
+    () =>
+      filtered.filter(
+        (c) => (c.workflow_type || "Claim_Division") === "GIO_Approval",
+      ),
+    [filtered],
+  );
+
+  const gioMonitoring = useMemo(
+    () => buildGioMonitoring(gioClaims),
+    [gioClaims],
+  );
+
+  const gioPerformance = useMemo(
+    () => buildGioPerformance(gioClaims),
+    [gioClaims],
   );
 
   const streamClaimIds = useMemo(
@@ -562,11 +593,16 @@ export default function Reports() {
         : "All Streams";
 
   const currentReportLabel =
-    REPORT_TYPES.find((r) => r.value === reportType)?.label || "Report";
+    effectiveReportType === "gio_monitoring"
+      ? "GIO Claim & Approval Monitoring"
+      : effectiveReportType === "gio_performance"
+        ? "GIO Approval Performance"
+        : REPORT_TYPES.find((r) => r.value === effectiveReportType)?.label ||
+          "Report";
 
   // ---- Generic export: builds a table from whatever report is active ----
   function getExportTable() {
-    switch (reportType) {
+    switch (effectiveReportType) {
       case "tat":
         return {
           headers: ["Stage", "Avg Days", "Completed Count"],
@@ -649,6 +685,48 @@ export default function Reports() {
             String(r.actualRole).replace(/_/g, " "),
             r.compliant ? "Yes" : "NO — VIOLATION",
           ]),
+        };
+      case "gio_monitoring":
+        return {
+          headers: [
+            "Case reason",
+            "Completed",
+            "Rejected",
+            "Returned",
+            "In progress",
+          ],
+          rows: gioMonitoring.byType.map((r) => [
+            r.label,
+            r.completed,
+            r.rejected,
+            r.returned,
+            r.inProgress,
+          ]),
+        };
+
+      case "gio_performance":
+        return {
+          headers: ["Metric", "Value"],
+          rows: [
+            ["Total received", gioPerformance.received],
+            ["In progress", gioPerformance.inProgress],
+            ["Returned", gioPerformance.returned],
+            ["Completed", gioPerformance.completed],
+            ["Rejected", gioPerformance.rejected],
+            ["Work order (completed)", gioPerformance.workOrders],
+            ["Cash option (completed)", gioPerformance.cashOption],
+            ["Payment (completed)", gioPerformance.paymentApprovals],
+            ["Salvage (completed)", gioPerformance.salvage],
+            ["Total loss (completed)", gioPerformance.totalLoss],
+            ["Repair (completed)", gioPerformance.repair],
+            ["Complaints (all in period)", gioPerformance.complaints],
+            ["Advisory (all in period)", gioPerformance.advisory],
+            [
+              "Total completed amount (ETB)",
+              gioPerformance.totalCompletedAmount,
+            ],
+            ["Total paid (ETB)", gioPerformance.totalPaid],
+          ],
         };
       case "pending":
       case "tracking":
@@ -910,6 +988,15 @@ export default function Reports() {
                 onClick={() => {
                   setStreamChoice(t.value);
                   setPage(1);
+                  if (t.value === "GIO_Approval") {
+                    setReportType("gio_monitoring");
+                  } else {
+                    setReportType((prev) =>
+                      prev === "gio_monitoring" || prev === "gio_performance"
+                        ? "tracking"
+                        : prev,
+                    );
+                  }
                 }}
               >
                 {t.label}
@@ -945,26 +1032,26 @@ export default function Reports() {
         </Select>
       </div>
 
-      {/* Report type selector */}
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        {REPORT_TYPES.map((r) => (
-          <button
-            key={r.value}
-            onClick={() => {
-              setReportType(r.value);
-              setPage(1);
-            }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-all ${
-              reportType === r.value
-                ? "bg-primary text-primary-foreground shadow-sm"
-                : "bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <r.icon className="w-3.5 h-3.5" />
-            {r.label}
-          </button>
-        ))}
-      </div>
+      {stream !== "GIO_Approval" && (
+        // existing REPORT_TYPES UI — buttons or Select
+        <div className="flex flex-wrap gap-2">
+          {REPORT_TYPES.map((r) => {
+            const Icon = r.icon;
+            return (
+              <Button
+                key={r.value}
+                size="sm"
+                variant={reportType === r.value ? "default" : "outline"}
+                onClick={() => setReportType(r.value)}
+                className="gap-1"
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {r.label}
+              </Button>
+            );
+          })}
+        </div>
+      )}
 
       {/* KPIs — always visible as the Management Dashboard baseline */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -1015,627 +1102,786 @@ export default function Reports() {
           </CardContent>
         </Card>
       </div>
-
-      {/* ---- Report-specific content ---- */}
-
-      {(reportType === "tracking" || reportType === "pending") && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">
-              {reportType === "pending"
-                ? "Pending Claims"
-                : "Claim Status / Tracking"}
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Active claims in the selected stream. Delayed if &gt;{" "}
-              {DELAY_DAYS_THRESHOLD} days in stage or past due date.
-            </p>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            {pendingDelayedRows.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No active claims
-              </p>
-            ) : (
-              <>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-xs">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1"
-                          onClick={() => toggleSort("claim")}
-                        >
-                          Claim Number <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead className="text-xs">Insured</TableHead>
-                      <TableHead className="text-xs">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1"
-                          onClick={() => toggleSort("status")}
-                        >
-                          Status <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead className="text-xs">Current Stage</TableHead>
-                      <TableHead className="text-xs">Responsible</TableHead>
-                      <TableHead className="text-xs">Entered Stage</TableHead>
-                      <TableHead className="text-xs">
-                        <button
-                          type="button"
-                          className="inline-flex items-center gap-1"
-                          onClick={() => toggleSort("days")}
-                        >
-                          Days <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead className="text-xs">Indicator</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {pageRows.map((r) => (
-                      <TableRow key={r.id}>
-                        <TableCell className="text-xs font-medium">
-                          {r.claim_reference}
-                        </TableCell>
-                        <TableCell className="text-xs">{r.insured}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant="secondary"
-                            className={`text-[10px] ${STATUS_COLORS[r.status] || ""}`}
-                          >
-                            {String(r.status || "").replace(/_/g, " ")}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs max-w-[160px] truncate">
-                          {r.stage}
-                        </TableCell>
-                        <TableCell className="text-xs">
-                          {r.responsible}
-                        </TableCell>
-                        <TableCell className="text-xs text-muted-foreground">
-                          {r.entered
-                            ? moment(r.entered).format("DD MMM YYYY")
-                            : "—"}
-                        </TableCell>
-                        <TableCell
-                          className={`text-xs font-semibold ${r.delayed ? "text-red-600" : ""}`}
-                        >
-                          {r.days}
-                        </TableCell>
-                        <TableCell>
-                          {r.delayed ? (
-                            <Badge className="bg-red-100 text-red-700 text-[10px]">
-                              Delayed
-                            </Badge>
-                          ) : (
-                            <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">
-                              On track
-                            </Badge>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 mt-2 border-t">
-                  <p className="text-xs text-muted-foreground">
-                    Showing {showingFrom}–{showingTo} of{" "}
-                    {pendingDelayedRows.length} claims
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1"
-                      disabled={safePage <= 1}
-                      onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    >
-                      <ChevronLeft className="w-4 h-4" /> Prev
-                    </Button>
-                    <span className="text-xs text-muted-foreground tabular-nums px-1">
-                      Page {safePage} of {totalPages}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 gap-1"
-                      disabled={safePage >= totalPages}
-                      onClick={() =>
-                        setPage((p) => Math.min(totalPages, p + 1))
-                      }
-                    >
-                      Next <ChevronRight className="w-4 h-4" />
-                    </Button>
-                  </div>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
+      {stream === "GIO_Approval" && (
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            variant={reportType === "gio_monitoring" ? "default" : "outline"}
+            onClick={() => {
+              setReportType("gio_monitoring");
+            }}
+          >
+            Claim & Approval Monitoring
+          </Button>
+          <Button
+            size="sm"
+            variant={reportType === "gio_performance" ? "default" : "outline"}
+            onClick={() => {
+              setReportType("gio_performance");
+            }}
+          >
+            Approval Performance
+          </Button>
+        </div>
       )}
 
-      {reportType === "tat" && (
-        <>
-          <Card className="border-0 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">
-                Turnaround Time by Stage
-              </CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Average days spent in each stage, based on completed activities.
-              </p>
-            </CardHeader>
-            <CardContent>
-              {tatByStage.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">
-                  No completed stage data yet
+      {stream === "GIO_Approval" && reportType === "gio_monitoring" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            {[
+              ["Received", gioMonitoring.totals.received],
+              ["In progress", gioMonitoring.totals.inProgress],
+              ["Returned", gioMonitoring.totals.returned],
+              ["Completed", gioMonitoring.totals.completed],
+              ["Rejected", gioMonitoring.totals.rejected],
+            ].map(([label, value]) => (
+              <Card key={label} className="border-0 shadow-sm">
+                <CardContent className="p-4">
+                  <p className="text-[10px] uppercase text-muted-foreground">
+                    {label}
+                  </p>
+                  <p className="text-2xl font-bold tabular-nums">{value}</p>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">Complaints</p>
+                <p className="text-xl font-bold">
+                  {gioMonitoring.complaintsCount}
                 </p>
-              ) : (
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart
-                    data={tatByStage}
-                    layout="vertical"
-                    margin={{ left: 40 }}
-                  >
-                    <XAxis type="number" tick={{ fontSize: 10 }} />
-                    <YAxis
-                      dataKey="stage"
-                      type="category"
-                      width={160}
-                      tick={{ fontSize: 9 }}
-                    />
-                    <Tooltip />
-                    <Bar
-                      dataKey="avgDays"
-                      fill="#2563eb"
-                      radius={[0, 6, 6, 0]}
-                      name="Avg Days"
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              )}
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-4">
+                <p className="text-xs text-muted-foreground">
+                  Advisory requests
+                </p>
+                <p className="text-xl font-bold">
+                  {gioMonitoring.advisoryCount}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+
           <Card className="border-0 shadow-sm">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">
-                Turnaround Time by Performer
-              </CardTitle>
+              <CardTitle className="text-sm">Status by case reason</CardTitle>
             </CardHeader>
             <CardContent className="overflow-x-auto">
-              {tatByPerformer.length === 0 ? (
-                <p className="text-sm text-muted-foreground text-center py-8">
-                  No data yet
-                </p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="text-xs">Performer</TableHead>
-                      <TableHead className="text-xs">
-                        Stages Completed
-                      </TableHead>
-                      <TableHead className="text-xs">
-                        Avg Days / Stage
-                      </TableHead>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-xs">Case reason</TableHead>
+                    <TableHead className="text-xs">Completed</TableHead>
+                    <TableHead className="text-xs">Rejected</TableHead>
+                    <TableHead className="text-xs">Returned</TableHead>
+                    <TableHead className="text-xs">In progress</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {gioMonitoring.byType.map((r) => (
+                    <TableRow key={r.reason}>
+                      <TableCell className="text-xs">{r.label}</TableCell>
+                      <TableCell className="text-xs">{r.completed}</TableCell>
+                      <TableCell className="text-xs">{r.rejected}</TableCell>
+                      <TableCell className="text-xs">{r.returned}</TableCell>
+                      <TableCell className="text-xs">{r.inProgress}</TableCell>
                     </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {tatByPerformer.map((p) => (
-                      <TableRow key={p.performer}>
-                        <TableCell className="text-xs">{p.performer}</TableCell>
-                        <TableCell className="text-xs">
-                          {p.stagesCompleted}
-                        </TableCell>
-                        <TableCell className="text-xs font-semibold">
-                          {p.avgDays}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
+                  ))}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
-        </>
+        </div>
       )}
 
-      {reportType === "bottleneck" && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">
-              Bottleneck / Delay (Aging)
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">
-              Stages currently open longer than {DELAY_DAYS_THRESHOLD} days.
-            </p>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            {bottleneckRows.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No bottlenecked stages
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Claim Ref</TableHead>
-                    <TableHead className="text-xs">Stage</TableHead>
-                    <TableHead className="text-xs">Performer</TableHead>
-                    <TableHead className="text-xs">Department</TableHead>
-                    <TableHead className="text-xs">Days Open</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {bottleneckRows.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell className="text-xs font-medium">
-                        {r.claim_reference}
-                      </TableCell>
-                      <TableCell className="text-xs">{r.stage}</TableCell>
-                      <TableCell className="text-xs">{r.performer}</TableCell>
-                      <TableCell className="text-xs">
-                        {String(r.department).replace(/_/g, " ")}
-                      </TableCell>
-                      <TableCell className="text-xs font-semibold text-red-600">
-                        {r.days}d
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+      {stream === "GIO_Approval" && reportType === "gio_performance" && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          {[
+            ["Received", gioPerformance.received],
+            ["Completed", gioPerformance.completed],
+            ["In progress", gioPerformance.inProgress],
+            ["Returned", gioPerformance.returned],
+            ["Work orders completed", gioPerformance.workOrders],
+            ["Cash option completed", gioPerformance.cashOption],
+            ["Payment approvals completed", gioPerformance.paymentApprovals],
+            [
+              "Total completed amount (ETB)",
+              gioPerformance.totalCompletedAmount,
+            ],
+          ].map(([label, value]) => (
+            <Card key={label} className="border-0 shadow-sm">
+              <CardContent className="p-4">
+                <p className="text-[10px] text-muted-foreground">{label}</p>
+                <p className="text-lg font-bold tabular-nums">
+                  {String(label).includes("amount")
+                    ? Number(value || 0).toLocaleString()
+                    : value}
+                </p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       )}
 
-      {reportType === "district" && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">
-              District / Branch Claims Summary
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            {districtSummary.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No data
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Office / Branch</TableHead>
-                    <TableHead className="text-xs">Volume</TableHead>
-                    <TableHead className="text-xs">Avg TAT (days)</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {districtSummary.map((d) => (
-                    <TableRow key={d.office}>
-                      <TableCell className="text-xs">{d.office}</TableCell>
-                      <TableCell className="text-xs font-semibold">
-                        {d.volume}
-                      </TableCell>
-                      <TableCell className="text-xs">{d.avgTAT}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {reportType === "class" && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Class-of-Business Summary</CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            {classSummary.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No data
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Class of Business</TableHead>
-                    <TableHead className="text-xs">Volume</TableHead>
-                    <TableHead className="text-xs">Closed</TableHead>
-                    <TableHead className="text-xs">
-                      Total Amount (ETB)
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {classSummary.map((c) => (
-                    <TableRow key={c.type}>
-                      <TableCell className="text-xs">{c.type}</TableCell>
-                      <TableCell className="text-xs font-semibold">
-                        {c.count}
-                      </TableCell>
-                      <TableCell className="text-xs">{c.closed}</TableCell>
-                      <TableCell className="text-xs">
-                        {c.amount.toLocaleString()}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {reportType === "decision" && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Decision Outcome</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {decisionRows.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No decision data captured yet — this populates once the
-                per-stage decision field (Total Loss / Repair / Less Salvage /
-                Cash Option) is recorded on the Decision stage.
-              </p>
-            ) : (
-              <ResponsiveContainer width="100%" height={260}>
-                <BarChart data={decisionSummary}>
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="count" fill="#8b5cf6" radius={[6, 6, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {reportType === "payment" && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Payment / Disbursement</CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            {paymentRows.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No payment data captured yet — this populates once payee and
-                final payment amount are recorded on the Discharge &amp; Payment
-                stage.
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Claim Ref</TableHead>
-                    <TableHead className="text-xs">Payee</TableHead>
-                    <TableHead className="text-xs">Amount (ETB)</TableHead>
-                    <TableHead className="text-xs">Payment Date</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {paymentRows.map((r, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="text-xs">
-                        {r.claim_reference}
-                      </TableCell>
-                      <TableCell className="text-xs">{r.payee}</TableCell>
-                      <TableCell className="text-xs font-semibold">
-                        {r.amount.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {r.date ? moment(r.date).format("DD MMM YYYY") : "—"}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {reportType === "recovery" && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">
-              Subrogation / Recovery-Linked Claims
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            {recoveryRows.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No linked claims in this period
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Claim Ref</TableHead>
-                    <TableHead className="text-xs">Insured</TableHead>
-                    <TableHead className="text-xs">Type</TableHead>
-                    <TableHead className="text-xs">Status</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {recoveryRows.map((r, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="text-xs font-medium">
-                        {r.claim_reference}
-                      </TableCell>
-                      <TableCell className="text-xs">{r.insured}</TableCell>
-                      <TableCell className="text-xs">{r.type}</TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="secondary"
-                          className={`text-[10px] ${STATUS_COLORS[r.status] || ""}`}
-                        >
-                          {String(r.status || "").replace(/_/g, " ")}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {reportType === "doa" && (
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm">Approval / DoA Compliance</CardTitle>
-            <p className="text-xs text-muted-foreground">
-              {doaViolations.length > 0 ? (
-                <span className="text-red-600 font-medium">
-                  {doaViolations.length} claim(s) outside delegated authority
-                </span>
-              ) : (
-                "All current approvals are within delegated authority"
-              )}
-            </p>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            {doaRows.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                No claims with an active approver to check
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-xs">Claim Ref</TableHead>
-                    <TableHead className="text-xs">Amount (ETB)</TableHead>
-                    <TableHead className="text-xs">Required Role</TableHead>
-                    <TableHead className="text-xs">Actual Role</TableHead>
-                    <TableHead className="text-xs">Compliant</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {doaRows.map((r, i) => (
-                    <TableRow key={i}>
-                      <TableCell className="text-xs font-medium">
-                        {r.claim_reference}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {r.amount?.toLocaleString()}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {String(r.requiredRole).replace(/_/g, " ")}
-                      </TableCell>
-                      <TableCell className="text-xs">
-                        {String(r.actualRole).replace(/_/g, " ")}
-                      </TableCell>
-                      <TableCell>
-                        {r.compliant ? (
-                          <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">
-                            Compliant
-                          </Badge>
-                        ) : (
-                          <Badge className="bg-red-100 text-red-700 text-[10px]">
-                            Violation
-                          </Badge>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Trend + Source stay visible for the overview-style reports */}
-      {["tracking", "pending"].includes(reportType) && (
+      {stream !== "GIO_Approval" && (
         <>
-          <Card className="border-0 shadow-sm">
-            <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
-              <CardTitle className="text-sm">Claim Workflow Trend</CardTitle>
-              <Select
-                value={trendGranularity}
-                onValueChange={setTrendGranularity}
-              >
-                <SelectTrigger className="w-32 h-8">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="daily">Daily</SelectItem>
-                  <SelectItem value="weekly">Weekly</SelectItem>
-                  <SelectItem value="monthly">Monthly</SelectItem>
-                  <SelectItem value="yearly">Yearly</SelectItem>
-                </SelectContent>
-              </Select>
-            </CardHeader>
-            <CardContent>
-              {trendData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={260}>
-                  <LineChart data={trendData}>
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      className="opacity-30"
-                    />
-                    <XAxis dataKey="label" tick={{ fontSize: 10 }} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <Line
-                      type="monotone"
-                      dataKey="count"
-                      stroke="#2563eb"
-                      strokeWidth={2}
-                      dot={{ r: 3 }}
-                      name="Claims"
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-12">
-                  No data
+          {(reportType === "tracking" || reportType === "pending") && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  {reportType === "pending"
+                    ? "Pending Claims"
+                    : "Claim Status / Tracking"}
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Active claims in the selected stream. Delayed if &gt;{" "}
+                  {DELAY_DAYS_THRESHOLD} days in stage or past due date.
                 </p>
-              )}
-            </CardContent>
-          </Card>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                {pendingDelayedRows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No active claims
+                  </p>
+                ) : (
+                  <>
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1"
+                              onClick={() => toggleSort("claim")}
+                            >
+                              Claim Number <ArrowUpDown className="w-3 h-3" />
+                            </button>
+                          </TableHead>
+                          <TableHead className="text-xs">Insured</TableHead>
+                          <TableHead className="text-xs">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1"
+                              onClick={() => toggleSort("status")}
+                            >
+                              Status <ArrowUpDown className="w-3 h-3" />
+                            </button>
+                          </TableHead>
+                          <TableHead className="text-xs">
+                            Current Stage
+                          </TableHead>
+                          <TableHead className="text-xs">Responsible</TableHead>
+                          <TableHead className="text-xs">
+                            Entered Stage
+                          </TableHead>
+                          <TableHead className="text-xs">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1"
+                              onClick={() => toggleSort("days")}
+                            >
+                              Days <ArrowUpDown className="w-3 h-3" />
+                            </button>
+                          </TableHead>
+                          <TableHead className="text-xs">Indicator</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {pageRows.map((r) => (
+                          <TableRow key={r.id}>
+                            <TableCell className="text-xs font-medium">
+                              {r.claim_reference}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.insured}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="secondary"
+                                className={`text-[10px] ${STATUS_COLORS[r.status] || ""}`}
+                              >
+                                {String(r.status || "").replace(/_/g, " ")}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs max-w-[160px] truncate">
+                              {r.stage}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.responsible}
+                            </TableCell>
+                            <TableCell className="text-xs text-muted-foreground">
+                              {r.entered
+                                ? moment(r.entered).format("DD MMM YYYY")
+                                : "—"}
+                            </TableCell>
+                            <TableCell
+                              className={`text-xs font-semibold ${r.delayed ? "text-red-600" : ""}`}
+                            >
+                              {r.days}
+                            </TableCell>
+                            <TableCell>
+                              {r.delayed ? (
+                                <Badge className="bg-red-100 text-red-700 text-[10px]">
+                                  Delayed
+                                </Badge>
+                              ) : (
+                                <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">
+                                  On track
+                                </Badge>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 mt-2 border-t">
+                      <p className="text-xs text-muted-foreground">
+                        Showing {showingFrom}–{showingTo} of{" "}
+                        {pendingDelayedRows.length} claims
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1"
+                          disabled={safePage <= 1}
+                          onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        >
+                          <ChevronLeft className="w-4 h-4" /> Prev
+                        </Button>
+                        <span className="text-xs text-muted-foreground tabular-nums px-1">
+                          Page {safePage} of {totalPages}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1"
+                          disabled={safePage >= totalPages}
+                          onClick={() =>
+                            setPage((p) => Math.min(totalPages, p + 1))
+                          }
+                        >
+                          Next <ChevronRight className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
-          <Card className="border-0 shadow-sm">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Claim Source</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Originating office type (Service Center, District, etc.)
-              </p>
-            </CardHeader>
-            <CardContent>
-              {sourceData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={260}>
-                  <BarChart data={sourceData}>
-                    <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                    <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                    <Tooltip />
-                    <Bar
-                      dataKey="count"
-                      fill="#2563eb"
-                      radius={[6, 6, 0, 0]}
-                      name="Claims"
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-12">
-                  No source data
+          {reportType === "tat" && (
+            <>
+              <Card className="border-0 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">
+                    Turnaround Time by Stage
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Average days spent in each stage, based on completed
+                    activities.
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {tatByStage.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      No completed stage data yet
+                    </p>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={280}>
+                      <BarChart
+                        data={tatByStage}
+                        layout="vertical"
+                        margin={{ left: 40 }}
+                      >
+                        <XAxis type="number" tick={{ fontSize: 10 }} />
+                        <YAxis
+                          dataKey="stage"
+                          type="category"
+                          width={160}
+                          tick={{ fontSize: 9 }}
+                        />
+                        <Tooltip />
+                        <Bar
+                          dataKey="avgDays"
+                          fill="#2563eb"
+                          radius={[0, 6, 6, 0]}
+                          name="Avg Days"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
+                </CardContent>
+              </Card>
+              <Card className="border-0 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">
+                    Turnaround Time by Performer
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="overflow-x-auto">
+                  {tatByPerformer.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-8">
+                      No data yet
+                    </p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-xs">Performer</TableHead>
+                          <TableHead className="text-xs">
+                            Stages Completed
+                          </TableHead>
+                          <TableHead className="text-xs">
+                            Avg Days / Stage
+                          </TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {tatByPerformer.map((p) => (
+                          <TableRow key={p.performer}>
+                            <TableCell className="text-xs">
+                              {p.performer}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {p.stagesCompleted}
+                            </TableCell>
+                            <TableCell className="text-xs font-semibold">
+                              {p.avgDays}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
+
+          {reportType === "bottleneck" && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Bottleneck / Delay (Aging)
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  Stages currently open longer than {DELAY_DAYS_THRESHOLD} days.
                 </p>
-              )}
-            </CardContent>
-          </Card>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                {bottleneckRows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No bottlenecked stages
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Claim Ref</TableHead>
+                        <TableHead className="text-xs">Stage</TableHead>
+                        <TableHead className="text-xs">Performer</TableHead>
+                        <TableHead className="text-xs">Department</TableHead>
+                        <TableHead className="text-xs">Days Open</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {bottleneckRows.map((r) => (
+                        <TableRow key={r.id}>
+                          <TableCell className="text-xs font-medium">
+                            {r.claim_reference}
+                          </TableCell>
+                          <TableCell className="text-xs">{r.stage}</TableCell>
+                          <TableCell className="text-xs">
+                            {r.performer}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {String(r.department).replace(/_/g, " ")}
+                          </TableCell>
+                          <TableCell className="text-xs font-semibold text-red-600">
+                            {r.days}d
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {reportType === "district" && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  District / Branch Claims Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                {districtSummary.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No data
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">
+                          Office / Branch
+                        </TableHead>
+                        <TableHead className="text-xs">Volume</TableHead>
+                        <TableHead className="text-xs">
+                          Avg TAT (days)
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {districtSummary.map((d) => (
+                        <TableRow key={d.office}>
+                          <TableCell className="text-xs">{d.office}</TableCell>
+                          <TableCell className="text-xs font-semibold">
+                            {d.volume}
+                          </TableCell>
+                          <TableCell className="text-xs">{d.avgTAT}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {reportType === "class" && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Class-of-Business Summary
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                {classSummary.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No data
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">
+                          Class of Business
+                        </TableHead>
+                        <TableHead className="text-xs">Volume</TableHead>
+                        <TableHead className="text-xs">Closed</TableHead>
+                        <TableHead className="text-xs">
+                          Total Amount (ETB)
+                        </TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {classSummary.map((c) => (
+                        <TableRow key={c.type}>
+                          <TableCell className="text-xs">{c.type}</TableCell>
+                          <TableCell className="text-xs font-semibold">
+                            {c.count}
+                          </TableCell>
+                          <TableCell className="text-xs">{c.closed}</TableCell>
+                          <TableCell className="text-xs">
+                            {c.amount.toLocaleString()}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {reportType === "decision" && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">Decision Outcome</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {decisionRows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No decision data captured yet — this populates once the
+                    per-stage decision field (Total Loss / Repair / Less Salvage
+                    / Cash Option) is recorded on the Decision stage.
+                  </p>
+                ) : (
+                  <ResponsiveContainer width="100%" height={260}>
+                    <BarChart data={decisionSummary}>
+                      <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                      <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                      <Tooltip />
+                      <Bar
+                        dataKey="count"
+                        fill="#8b5cf6"
+                        radius={[6, 6, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {reportType === "payment" && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Payment / Disbursement
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                {paymentRows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No payment data captured yet — this populates once payee and
+                    final payment amount are recorded on the Discharge &amp;
+                    Payment stage.
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Claim Ref</TableHead>
+                        <TableHead className="text-xs">Payee</TableHead>
+                        <TableHead className="text-xs">Amount (ETB)</TableHead>
+                        <TableHead className="text-xs">Payment Date</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {paymentRows.map((r, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="text-xs">
+                            {r.claim_reference}
+                          </TableCell>
+                          <TableCell className="text-xs">{r.payee}</TableCell>
+                          <TableCell className="text-xs font-semibold">
+                            {r.amount.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {r.date
+                              ? moment(r.date).format("DD MMM YYYY")
+                              : "—"}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {reportType === "recovery" && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Subrogation / Recovery-Linked Claims
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                {recoveryRows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No linked claims in this period
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Claim Ref</TableHead>
+                        <TableHead className="text-xs">Insured</TableHead>
+                        <TableHead className="text-xs">Type</TableHead>
+                        <TableHead className="text-xs">Status</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {recoveryRows.map((r, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="text-xs font-medium">
+                            {r.claim_reference}
+                          </TableCell>
+                          <TableCell className="text-xs">{r.insured}</TableCell>
+                          <TableCell className="text-xs">{r.type}</TableCell>
+                          <TableCell>
+                            <Badge
+                              variant="secondary"
+                              className={`text-[10px] ${STATUS_COLORS[r.status] || ""}`}
+                            >
+                              {String(r.status || "").replace(/_/g, " ")}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {reportType === "doa" && (
+            <Card className="border-0 shadow-sm">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm">
+                  Approval / DoA Compliance
+                </CardTitle>
+                <p className="text-xs text-muted-foreground">
+                  {doaViolations.length > 0 ? (
+                    <span className="text-red-600 font-medium">
+                      {doaViolations.length} claim(s) outside delegated
+                      authority
+                    </span>
+                  ) : (
+                    "All current approvals are within delegated authority"
+                  )}
+                </p>
+              </CardHeader>
+              <CardContent className="overflow-x-auto">
+                {doaRows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-8">
+                    No claims with an active approver to check
+                  </p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Claim Ref</TableHead>
+                        <TableHead className="text-xs">Amount (ETB)</TableHead>
+                        <TableHead className="text-xs">Required Role</TableHead>
+                        <TableHead className="text-xs">Actual Role</TableHead>
+                        <TableHead className="text-xs">Compliant</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {doaRows.map((r, i) => (
+                        <TableRow key={i}>
+                          <TableCell className="text-xs font-medium">
+                            {r.claim_reference}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {r.amount?.toLocaleString()}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {String(r.requiredRole).replace(/_/g, " ")}
+                          </TableCell>
+                          <TableCell className="text-xs">
+                            {String(r.actualRole).replace(/_/g, " ")}
+                          </TableCell>
+                          <TableCell>
+                            {r.compliant ? (
+                              <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">
+                                Compliant
+                              </Badge>
+                            ) : (
+                              <Badge className="bg-red-100 text-red-700 text-[10px]">
+                                Violation
+                              </Badge>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Trend + Source stay visible for the overview-style reports */}
+          {["tracking", "pending"].includes(reportType) && (
+            <>
+              <Card className="border-0 shadow-sm">
+                <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">
+                  <CardTitle className="text-sm">
+                    Claim Workflow Trend
+                  </CardTitle>
+                  <Select
+                    value={trendGranularity}
+                    onValueChange={setTrendGranularity}
+                  >
+                    <SelectTrigger className="w-32 h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="daily">Daily</SelectItem>
+                      <SelectItem value="weekly">Weekly</SelectItem>
+                      <SelectItem value="monthly">Monthly</SelectItem>
+                      <SelectItem value="yearly">Yearly</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </CardHeader>
+                <CardContent>
+                  {trendData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <LineChart data={trendData}>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          className="opacity-30"
+                        />
+                        <XAxis dataKey="label" tick={{ fontSize: 10 }} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                        <Tooltip />
+                        <Line
+                          type="monotone"
+                          dataKey="count"
+                          stroke="#2563eb"
+                          strokeWidth={2}
+                          dot={{ r: 3 }}
+                          name="Claims"
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-12">
+                      No data
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="border-0 shadow-sm">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm">Claim Source</CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Originating office type (Service Center, District, etc.)
+                  </p>
+                </CardHeader>
+                <CardContent>
+                  {sourceData.length > 0 ? (
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart data={sourceData}>
+                        <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                        <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                        <Tooltip />
+                        <Bar
+                          dataKey="count"
+                          fill="#2563eb"
+                          radius={[6, 6, 0, 0]}
+                          name="Claims"
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="text-sm text-muted-foreground text-center py-12">
+                      No source data
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            </>
+          )}
         </>
       )}
     </div>
