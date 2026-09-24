@@ -194,6 +194,7 @@ export default function Reports() {
   const [nameByEmail, setNameByEmail] = useState({});
   const [page, setPage] = useState(1);
   const [reportType, setReportType] = useState("tracking");
+  const [linkFlag, setLinkFlag] = useState("recovery");
 
   useEffect(() => {
     let cancelled = false;
@@ -279,6 +280,20 @@ export default function Reports() {
   const gioPerformance = useMemo(
     () => buildGioPerformance(gioClaims),
     [gioClaims],
+  );
+
+  const LINK_FLAG_OPTIONS = [
+    { value: "recovery", label: "Third party recovery", field: "is_recovery" },
+    { value: "subrogation", label: "Subrogation", field: "is_subrogation" },
+    { value: "reinsurance", label: "Reinsurance", field: "is_reinsurance" },
+  ];
+
+  const linkMeta =
+    LINK_FLAG_OPTIONS.find((o) => o.value === linkFlag) || LINK_FLAG_OPTIONS[0];
+
+  const linkYesCount = useMemo(
+    () => gioClaims.filter((c) => !!c[linkMeta.field]).length,
+    [gioClaims, linkMeta.field],
   );
 
   const streamClaimIds = useMemo(
@@ -690,43 +705,64 @@ export default function Reports() {
         return {
           headers: [
             "Case reason",
+            "Insurance type",
+            "Originating Office Type",
+            "Originating Office",
+            "Final payment amount (ETB)",
+            "Recovery links",
             "Completed",
             "Rejected",
             "Returned",
             "In progress",
           ],
-          rows: gioMonitoring.byType.map((r) => [
-            r.label,
-            r.completed,
-            r.rejected,
-            r.returned,
-            r.inProgress,
-          ]),
-        };
+          rows: gioClaims.map((c) => {
+            const reasonKey = c.gio_case_reason || "";
+            const reasonLabel =
+              gioMonitoring.byType.find((r) => r.reason === reasonKey)?.label ||
+              String(reasonKey).replace(/_/g, " ") ||
+              "—";
 
-      case "gio_performance":
-        return {
-          headers: ["Metric", "Value"],
-          rows: [
-            ["Total received", gioPerformance.received],
-            ["In progress", gioPerformance.inProgress],
-            ["Returned", gioPerformance.returned],
-            ["Completed", gioPerformance.completed],
-            ["Rejected", gioPerformance.rejected],
-            ["Work order (completed)", gioPerformance.workOrders],
-            ["Cash option (completed)", gioPerformance.cashOption],
-            ["Payment (completed)", gioPerformance.paymentApprovals],
-            ["Salvage (completed)", gioPerformance.salvage],
-            ["Total loss (completed)", gioPerformance.totalLoss],
-            ["Repair (completed)", gioPerformance.repair],
-            ["Complaints (all in period)", gioPerformance.complaints],
-            ["Advisory (all in period)", gioPerformance.advisory],
-            [
-              "Total completed amount (ETB)",
-              gioPerformance.totalCompletedAmount,
-            ],
-            ["Total paid (ETB)", gioPerformance.totalPaid],
-          ],
+            const completed =
+              !!c.closure_date ||
+              ["Claim_Closed", "Closed", "Completed", "Approved"].includes(
+                c.status,
+              );
+            const rejected = c.status === "Rejected";
+            const returned = [
+              "Returned_for_Correction",
+              "Returned_to_Originating_Office",
+              "Additional_Info_Requested",
+              "Returned",
+            ].includes(c.status);
+            const inProgress = !completed && !rejected && !returned;
+
+            const pay =
+              c.registration_data?.final_payment_amount ??
+              c.final_approval_amount ??
+              "";
+
+            const recoveryLinks =
+              [
+                c.is_recovery && "Third party recovery",
+                c.is_subrogation && "Subrogation",
+                c.is_reinsurance && "Reinsurance",
+              ]
+                .filter(Boolean)
+                .join("; ") || "None";
+
+            return [
+              reasonLabel,
+              c.insurance_type || "—",
+              String(c.originating_office_type || "—").replace(/_/g, " "),
+              c.originating_office || "—",
+              pay !== "" && pay != null ? Number(pay) : "",
+              recoveryLinks,
+              completed ? 1 : 0,
+              rejected ? 1 : 0,
+              returned ? 1 : 0,
+              inProgress ? 1 : 0,
+            ];
+          }),
         };
       case "pending":
       case "tracking":
@@ -735,21 +771,67 @@ export default function Reports() {
           headers: [
             "Reference",
             "Insured",
-            "Status",
-            "Stage",
-            "Responsible",
-            "Days",
-            "Health",
+            "Insurance type",
+            "Plate number",
+            "Garage name",
+            "Originating Office Type",
+            "Originating Office",
+            "Final payment amount (ETB)",
+            "Completed",
+            "Rejected",
+            "Returned",
+            "In progress",
           ],
-          rows: pendingDelayedRows.map((r) => [
-            r.claim_reference || "N/A",
-            r.insured || "—",
-            String(r.status || "").replace(/_/g, " "),
-            r.stage || "—",
-            r.responsible || "—",
-            `${r.days}d`,
-            r.delayed ? "DELAYED" : "ON TRACK",
-          ]),
+          rows: filtered.map((c) => {
+            const isMotor = String(c.insurance_type || "")
+              .toLowerCase()
+              .includes("motor");
+
+            const completed =
+              !!c.closure_date ||
+              ["Claim_Closed", "Closed", "Completed", "Approved"].includes(
+                c.status,
+              );
+            const rejected = c.status === "Rejected";
+            const returned = [
+              "Returned_for_Correction",
+              "Returned_to_Originating_Office",
+              "Additional_Info_Requested",
+              "Returned",
+            ].includes(c.status);
+            const inProgress = !completed && !rejected && !returned;
+
+            const pay =
+              c.registration_data?.final_payment_amount ??
+              c.final_approval_amount ??
+              "";
+
+            // plate / garage only meaningful for motor (show "—" otherwise)
+            const plate = isMotor
+              ? c.plate_number || c.vehicle_plate_number || "—"
+              : "—";
+            const garage = isMotor
+              ? c.winning_garage_name ||
+                c.garage_name ||
+                c.selected_garage_name ||
+                "—"
+              : "—";
+
+            return [
+              c.claim_reference || "N/A",
+              c.claimant_name || "—",
+              c.insurance_type || "—",
+              plate,
+              garage,
+              String(c.originating_office_type || "—").replace(/_/g, " "),
+              c.originating_office || "—",
+              pay !== "" && pay != null ? Number(pay) : "",
+              completed ? 1 : 0,
+              rejected ? 1 : 0,
+              returned ? 1 : 0,
+              inProgress ? 1 : 0,
+            ];
+          }),
         };
     }
   }
@@ -898,7 +980,14 @@ export default function Reports() {
     });
 
     const { headers, rows } = getExportTable();
-    const wsData = workbook.addWorksheet(currentReportLabel.slice(0, 31));
+    const sheetName =
+      (currentReportLabel || "Report")
+        .replace(/[*?:\\/[\]]/g, "-")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 31) || "Report";
+
+    const wsData = workbook.addWorksheet(sheetName);
     wsData.columns = headers.map((h) => ({ header: h, key: h, width: 22 }));
     wsData.getRow(1).eachCell((cell) => {
       cell.fill = HEADER_FILL;
@@ -1225,6 +1314,39 @@ export default function Reports() {
               </CardContent>
             </Card>
           ))}
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="space-y-1.5 min-w-[220px]">
+              <p className="text-[10px] uppercase text-muted-foreground">
+                Recovery / link type
+              </p>
+              <Select value={linkFlag} onValueChange={setLinkFlag}>
+                <SelectTrigger className="h-9">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LINK_FLAG_OPTIONS.map((o) => (
+                    <SelectItem key={o.value} value={o.value}>
+                      {o.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <Card className="border-0 shadow-sm flex-1 min-w-[160px]">
+              <CardContent className="p-4">
+                <p className="text-[10px] uppercase text-muted-foreground">
+                  {linkMeta.label} — Yes
+                </p>
+                <p className="text-2xl font-bold tabular-nums">
+                  {linkYesCount}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  of {gioClaims.length} GIO claims
+                </p>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       )}
 
