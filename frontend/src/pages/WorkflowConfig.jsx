@@ -35,7 +35,7 @@ import {
   DEPARTMENT_OPTIONS,
   INSURANCE_TYPES,
   WORKFLOW_STAGES,
-  CLAIM_APPROVAL_STAGES,
+  CLAIM_FOR_APPROVAL_WORKFLOW_STAGES,
 } from "@/lib/roleConfig";
 
 const STREAMS = {
@@ -54,12 +54,12 @@ const STREAMS = {
   Claim_Approval: {
     key: "Claim_Approval",
     label: "Claim for Approval",
-    shortLabel: "Claim for Approval",
+    shortLabel: "Approval",
     description:
-      "District / Branch files sent to Head Office for approval only.",
-    note: "Operation 2 (Claim for Approval). “Approval Review” escalates Director → Senior Director → CEO.",
-    template: CLAIM_APPROVAL_STAGES,
-    templateLabel: "District Approval",
+      "District or branch files a case at Head Office for approval only.",
+    note: "Registration → Director Assignment → Manager Assignment → Case Work → tier decisions (Claim Manager → Director → Senior Director → CEO) → Closure.",
+    template: CLAIM_FOR_APPROVAL_WORKFLOW_STAGES,
+    templateLabel: "Claim Approval stages",
     defaultRole: "secretary",
     defaultOfficeTypes: ["District_Office"],
   },

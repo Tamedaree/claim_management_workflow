@@ -1,6 +1,7 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -9,6 +10,23 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { getStageFields } from "@/lib/stageFieldConfig";
+
+const PARTICIPANT_TYPES = ["Garage", "Dealer", "Supplier"];
+
+const emptyParticipant = () => ({
+  participant_type: "Garage",
+  name: "",
+  contact_person: "",
+  phone: "",
+  bid_amount: "",
+  remarks: "",
+});
+
+const participantNameLabel = (type) => {
+  if (type === "Dealer") return "Dealer Name";
+  if (type === "Supplier") return "Supplier Name";
+  return "Garage Name";
+};
 
 function FieldInput({ field, value, onChange }) {
   switch (field.type) {
@@ -89,6 +107,127 @@ function FieldInput({ field, value, onChange }) {
           placeholder={field.placeholder}
         />
       );
+
+    case "participant_list": {
+      const list = Array.isArray(value) ? value : [];
+
+      const setList = (next) => onChange(next);
+
+      const updateRow = (idx, patch) => {
+        const next = list.map((row, i) =>
+          i === idx ? { ...row, ...patch } : row,
+        );
+        setList(next);
+      };
+
+      return (
+        <div className="space-y-3">
+          {list.map((row, idx) => (
+            <div
+              key={idx}
+              className="space-y-2 p-3 rounded-lg border border-border bg-background"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium">
+                  Participant {idx + 1}
+                </span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs text-red-600"
+                  onClick={() => setList(list.filter((_, i) => i !== idx))}
+                >
+                  Remove
+                </Button>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Participant Type</Label>
+                <Select
+                  value={row.participant_type || "Garage"}
+                  onValueChange={(v) => updateRow(idx, { participant_type: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {PARTICIPANT_TYPES.map((t) => (
+                      <SelectItem key={t} value={t}>
+                        {t}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">
+                  {participantNameLabel(row.participant_type)}{" "}
+                  <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  value={row.name || ""}
+                  onChange={(e) => updateRow(idx, { name: e.target.value })}
+                  placeholder={participantNameLabel(row.participant_type)}
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Contact Person</Label>
+                  <Input
+                    value={row.contact_person || ""}
+                    onChange={(e) =>
+                      updateRow(idx, { contact_person: e.target.value })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Phone Number</Label>
+                  <Input
+                    value={row.phone || ""}
+                    onChange={(e) => updateRow(idx, { phone: e.target.value })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Bid Amount (ETB)</Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={row.bid_amount ?? ""}
+                  onChange={(e) =>
+                    updateRow(idx, { bid_amount: e.target.value })
+                  }
+                />
+              </div>
+
+              <div className="space-y-1">
+                <Label className="text-xs">Remarks</Label>
+                <Textarea
+                  rows={2}
+                  value={row.remarks || ""}
+                  onChange={(e) => updateRow(idx, { remarks: e.target.value })}
+                />
+              </div>
+            </div>
+          ))}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={() => setList([...list, emptyParticipant()])}
+          >
+            + Add participant
+          </Button>
+        </div>
+      );
+    }
 
     case "checklist": {
       const selected = Array.isArray(value) ? value : [];
@@ -176,6 +315,7 @@ export function StageDataSummary({ stageName, data }) {
     .map((field) => ({
       label: field.label,
       value: data?.[field.key],
+      type: field.type,
     }))
     .filter(
       (entry) =>
@@ -192,11 +332,24 @@ export function StageDataSummary({ stageName, data }) {
       {entries.map((entry) => (
         <div key={entry.label}>
           <span className="text-muted-foreground">{entry.label}: </span>
-
           <span className="font-medium">
-            {Array.isArray(entry.value)
-              ? entry.value.join(", ")
-              : String(entry.value)}
+            {entry.type === "participant_list" && Array.isArray(entry.value)
+              ? entry.value
+                  .map((p) => {
+                    const type = p.participant_type || "Garage";
+                    const name = p.name || "—";
+                    const amt =
+                      p.bid_amount !== undefined &&
+                      p.bid_amount !== null &&
+                      p.bid_amount !== ""
+                        ? ` · Bid: ${Number(p.bid_amount).toLocaleString()} ETB`
+                        : "";
+                    return `${type} — ${name}${amt}`;
+                  })
+                  .join("; ")
+              : Array.isArray(entry.value)
+                ? entry.value.join(", ")
+                : String(entry.value)}
           </span>
         </div>
       ))}

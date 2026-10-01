@@ -117,6 +117,17 @@ const isGarageSelectionStage = (name = "") => {
   );
 };
 
+const stageInfoLabel = (name = "") => {
+  const n = name.toLowerCase();
+  if (n.includes("survey") || n.includes("damage assessment"))
+    return "See survey info";
+  if (n.includes("bid") || n.includes("tender")) return "See bid info";
+  if (n.includes("decision")) return "See decision info";
+  if (n.includes("payment") || n.includes("discharge"))
+    return "See payment info";
+  return "See stage info";
+};
+
 const toPrismaStatus = (s) => {
   if (s === "In Progress") return "In_Progress";
   if (s === "On Hold") return "On_Hold";
@@ -259,6 +270,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const [stageData, setStageData] = useState({});
 
   const [returnModalOpen, setReturnModalOpen] = useState(false);
+  const [infoModal, setInfoModal] = useState(null);
   const [returningStage, setReturningStage] = useState(null);
   const [returnTargetOrder, setReturnTargetOrder] = useState("");
   const [returnComments, setReturnComments] = useState("");
@@ -555,7 +567,6 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       .sort((a, b) => b.stage_order - a.stage_order);
 
   const handleReturnConfirm = async () => {
-    if (!actionModal) return;
     if (isTerminal) {
       toast({
         title: "Claim rejected",
@@ -914,6 +925,35 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         ];
       }
 
+      let claimAmountFromBids = null;
+      if (
+        prismaStatus === "Completed" &&
+        (stage.stage_name === "Bid / Tender Process" ||
+          String(stage.stage_name || "")
+            .toLowerCase()
+            .includes("bid") ||
+          String(stage.stage_name || "")
+            .toLowerCase()
+            .includes("tender"))
+      ) {
+        const participants = Array.isArray(registrationData.bid_participants)
+          ? registrationData.bid_participants
+          : [];
+
+        const amounts = participants
+          .map((p) => Number(p.bid_amount))
+          .filter((n) => !Number.isNaN(n) && n > 0);
+
+        if (amounts.length > 0) {
+          const selected = participants.find(
+            (p) => p.is_selected && Number(p.bid_amount) > 0,
+          );
+          claimAmountFromBids = selected
+            ? Number(selected.bid_amount)
+            : Math.min(...amounts);
+        }
+      }
+
       const activityData = {
         status: prismaStatus,
         comments: comments || existing?.comments || "",
@@ -1034,6 +1074,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             current_department: nextStage?.department || stage.department,
             current_approver_role: "None",
             ...(!claimHasFinalStatus && { status: mappedStatus }),
+            ...(claimAmountFromBids != null && {
+              claim_amount: claimAmountFromBids,
+            }),
           });
         } else if (isPrincipalAssignStage && selectedPrincipalId) {
           const principal = principals.find(
@@ -1047,6 +1090,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             current_department: nextStage?.department || stage.department,
             current_approver_role: "None",
             ...(!claimHasFinalStatus && { status: mappedStatus }),
+            ...(claimAmountFromBids != null && {
+              claim_amount: claimAmountFromBids,
+            }),
           });
         } else if (nextStage) {
           // Normal advance: next owner = next stage's responsible_role (e.g. claim_manager)
@@ -1081,6 +1127,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                   ? "Principal_of_Claim"
                   : "None",
             ...(!claimHasFinalStatus && { status: mappedStatus }),
+            ...(claimAmountFromBids != null && {
+              claim_amount: claimAmountFromBids,
+            }),
           });
 
           // Ensure next activity exists
@@ -1465,12 +1514,23 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                       {![
                         "Claim Receipt & Registration",
                         "Approval Case Registration",
-                      ].includes(stage.stage_name) && (
-                        <StageDataSummary
-                          stageName={stage.stage_name}
-                          data={activity?.registration_data}
-                        />
-                      )}
+                      ].includes(stage.stage_name) &&
+                        activity?.registration_data &&
+                        Object.keys(activity.registration_data).length > 0 && (
+                          <button
+                            type="button"
+                            className="mt-2 text-xs text-primary font-medium hover:underline inline-flex items-center gap-1"
+                            onClick={() =>
+                              setInfoModal({
+                                stageName: stage.stage_name,
+                                data: activity.registration_data,
+                              })
+                            }
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            {stageInfoLabel(stage.stage_name)}
+                          </button>
+                        )}
                       {escalation && (
                         <StageApprovalHistory
                           approvals={activity?.registration_data?.approvals}
@@ -1796,6 +1856,33 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
               className="bg-orange-600 hover:bg-orange-700"
             >
               {returnProcessing ? "Returning..." : "Confirm Return"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={!!infoModal}
+        onOpenChange={(open) => {
+          if (!open) setInfoModal(null);
+        }}
+      >
+        <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {infoModal ? getStageLabel(infoModal.stageName) : "Stage info"}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="pt-1">
+            {infoModal && (
+              <StageDataSummary
+                stageName={infoModal.stageName}
+                data={infoModal.data}
+              />
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setInfoModal(null)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

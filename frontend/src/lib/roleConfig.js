@@ -661,33 +661,79 @@ export const WORKFLOW_STAGES = [
   },
 ];
 
-// ============ OPERATION 2: Claim for Approval (District/Branch) ============
-export const CLAIM_APPROVAL_STAGES = [
+// ============ OPERATION 2: Claim for Approval ============
+export const CLAIM_FOR_APPROVAL_WORKFLOW_STAGES = [
   {
-    stage_name: "Approval Case Registration",
+    stage_name: "Claim Approval Registration",
     stage_order: 1,
     responsible_role: "secretary",
-    department: "Claim Division",
-    applicable_office_types: ["District_Office"],
-    description:
-      "Claim file received from District/Branch. Notification received date; district/branch name; class of business; insured name; plate number (motor); claim number; subrogation/recovery/reinsurance flag.",
+    department: "Claim_Division", // match your enum if needed
+    description: "Secretary registers Claim for Approval",
   },
   {
-    stage_name: "Approval Review",
+    stage_name: "Director Assignment",
     stage_order: 2,
     responsible_role: "director",
-    department: "Claim Division",
-    applicable_office_types: ["District_Office"],
-    description: "Escalates Director → Senior Director → CEO as needed.",
+    department: "Claim_Division",
+    description: "Director assigns CD Claim Manager",
   },
   {
-    stage_name: "Approval Case Closure",
+    stage_name: "Manager Assignment",
     stage_order: 3,
-    responsible_role: "secretary",
-    department: "Claim Division",
-    applicable_office_types: ["District_Office"],
-    description: "Secretary closes the case.",
+    responsible_role: "claim_manager",
+    department: "Claim_Division",
+    description: "Manager assigns CD Claim Principal",
   },
+  {
+    stage_name: "Claim Approval Case Work",
+    stage_order: 4,
+    responsible_role: "principal_claim_officer",
+    department: "Claim_Division",
+    description: "Claim Principal works the case",
+  },
+  {
+    stage_name: "Claim Manager Review",
+    stage_order: 5,
+    responsible_role: "claim_manager",
+    department: "Claim_Division",
+    description: "Manager may finalize within authority or forward",
+  },
+  {
+    stage_name: "Director Decision",
+    stage_order: 6,
+    responsible_role: "director",
+    department: "Claim_Division",
+    description: "Director may finalize or forward",
+  },
+  {
+    stage_name: "Senior Director Decision",
+    stage_order: 7,
+    responsible_role: "senior_director",
+    department: "Claim_Division",
+    description: "Senior Director may finalize or forward",
+  },
+  {
+    stage_name: "CEO Decision",
+    stage_order: 9,
+    responsible_role: "ceo",
+    department: "Claim_Division",
+    description: "CEO decision when required",
+  },
+  {
+    stage_name: "Claim Approval Closure",
+    stage_order: 10,
+    responsible_role: "claim_manager",
+    department: "Claim_Division",
+    description:
+      "Final status/remark; claim closed date. Escalates Manager → Director as needed.",
+  },
+];
+
+export const CLAIM_FOR_APPROVAL_TIER_STAGES = [
+  "Claim Manager Review",
+  "Director Decision",
+  "Senior Director Decision",
+  "CEO Decision",
 ];
 
 export const GIO_WORKFLOW_STAGES = [
@@ -810,7 +856,7 @@ export function getStageLabel(stageName) {
   return stageName || "";
 }
 export function getStageDescription(stageName) {
-  const all = [...WORKFLOW_STAGES, ...CLAIM_APPROVAL_STAGES];
+  const all = [...WORKFLOW_STAGES, ...CLAIM_FOR_APPROVAL_WORKFLOW_STAGES];
   return all.find((s) => s.stage_name === stageName)?.description || "";
 }
 

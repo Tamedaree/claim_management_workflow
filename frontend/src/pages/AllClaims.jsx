@@ -219,7 +219,8 @@ export default function AllClaims() {
   };
 
   const scope = useMemo(() => resolveScope(user?.role), [user?.role]);
-  const showCaseReason = scope === "all" || scope === "GIO_Approval";
+  const showCaseReason =
+    scope === "all" || scope === "GIO_Approval" || scope === "Claim_Division"; // Claim for Approval also uses gio_case_reason
 
   const statusOptions = useMemo(() => {
     if (scope === "GIO_Approval") return GIO_STATUS_LIST || [];
@@ -324,13 +325,33 @@ export default function AllClaims() {
     return matchSearch && matchStatus && matchType && matchReason;
   });
 
-  const sorted = [...filtered].sort((a, b) => {
-    const va = getSortValue(a, sortKey);
-    const vb = getSortValue(b, sortKey);
-    if (va < vb) return sortDir === "asc" ? -1 : 1;
-    if (va > vb) return sortDir === "asc" ? 1 : -1;
-    return 0;
-  });
+  const sorted = useMemo(() => {
+    let list = [...filtered];
+
+    // Workflow column: arrow filters by stream
+    if (sortKey === "workflow_type") {
+      if (sortDir === "asc") {
+        // ↑ Claim Division only
+        list = list.filter((c) => c.workflow_type !== "GIO_Approval");
+      } else {
+        // ↓ GIO cases only
+        list = list.filter((c) => c.workflow_type === "GIO_Approval");
+      }
+    }
+
+    list.sort((a, b) => {
+      // When filtering by workflow, still sort by date (newest first) inside the group
+      const key = sortKey === "workflow_type" ? "createdAt" : sortKey;
+      const dir = sortKey === "workflow_type" ? "desc" : sortDir;
+      const va = getSortValue(a, key);
+      const vb = getSortValue(b, key);
+      if (va < vb) return dir === "asc" ? -1 : 1;
+      if (va > vb) return dir === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    return list;
+  }, [filtered, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -423,7 +444,11 @@ export default function AllClaims() {
       c.claimant_name || "",
       c.insurance_type || "",
       c.workflow_type === "GIO_Approval" ? "GIO" : "Claim Division",
-      c.workflow_type === "GIO_Approval" ? formatReason(c.gio_case_reason) : "", // GIO only
+      c.workflow_type === "GIO_Approval" ||
+      c.registration_type === "Claim_for_Approval" ||
+      c.gio_case_reason
+        ? formatReason(c.gio_case_reason)
+        : "",
       (c.originating_office_type || "").replace(/_/g, " "), // CD + GIO
       c.originating_office || "", // CD + GIO
       c.plate_number || "",
@@ -743,6 +768,9 @@ export default function AllClaims() {
                 {pageRows.map((claim, idx) => {
                   const displayIndex = startIdx + idx + 1;
                   const isGio = claim.workflow_type === "GIO_Approval";
+                  const isApprovalCase =
+                    claim.registration_type === "Claim_for_Approval";
+                  const hasReason = !!claim.gio_case_reason;
                   return (
                     <TableRow key={claim.id} className="h-11">
                       <TableCell className="text-xs text-muted-foreground tabular-nums">
@@ -784,7 +812,7 @@ export default function AllClaims() {
                       )}
                       {showCaseReason && (
                         <TableCell className="text-sm">
-                          {isGio ? (
+                          {isGio || isApprovalCase || hasReason ? (
                             <span
                               className="text-xs truncate block"
                               title={formatReason(claim.gio_case_reason)}

@@ -194,9 +194,8 @@ export const STAGE_FIELD_CONFIG = {
   "Bid / Tender Process": [
     {
       key: "bid_participants",
-      label: "Garages / Dealers / Suppliers Invited",
-      type: "multitext",
-      placeholder: "One name per line",
+      label: "Participants",
+      type: "participant_list",
     },
     { key: "bid_opening_date", label: "Bid Opening Date", type: "date" },
     {
@@ -210,9 +209,12 @@ export const STAGE_FIELD_CONFIG = {
       label: "Re-bid / Independent Assessment",
       type: "yesno",
     },
-    { key: "rebid_reason", label: "Reason (if Yes above)", type: "textarea" },
+    {
+      key: "rebid_reason",
+      label: "Reason (if Yes above)",
+      type: "textarea",
+    },
   ],
-
   Decision: [
     {
       key: "decision_type",

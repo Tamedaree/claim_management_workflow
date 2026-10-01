@@ -206,9 +206,16 @@ export const createClaim = async (req, res, next) => {
       }
     }
 
-    if (isGio) {
+    const isClaimForApproval = registration_type === "Claim_for_Approval";
+
+    if (isGio || isClaimForApproval) {
       if (!gio_case_reason) {
-        throw new ApiError(400, "gio_case_reason is required for GIO cases");
+        throw new ApiError(
+          400,
+          isGio
+            ? "gio_case_reason is required for GIO cases"
+            : "gio_case_reason is required for Claim for Approval",
+        );
       }
       if (!GIO_CASE_REASONS.includes(gio_case_reason)) {
         throw new ApiError(400, "Invalid gio_case_reason");
@@ -270,7 +277,7 @@ export const createClaim = async (req, res, next) => {
           received_reference_number: received_reference_number || null,
           date_received: date_received ? new Date(date_received) : null,
           workflow_type: workflow_type || "Claim_Division",
-          gio_case_reason: isGio ? gio_case_reason : null,
+          gio_case_reason: isGio || isClaimForApproval ? gio_case_reason : null,
           priority: priority || "Medium",
           remarks: remarks || null,
           documents: documents || [],

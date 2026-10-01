@@ -67,7 +67,6 @@ enum OriginatingOfficeType {
   Service_Center
   District_Office
   Kefla_Ager_Branch
-  Border_Branch
   Head_Office
 }
 
@@ -151,6 +150,7 @@ enum CurrentApproverRole {
   Claim_Manager
   GIO_Claim_Manager
   Director
+  Senior_Director
   Chief_of_GIO
   CEO
   None
@@ -170,6 +170,7 @@ enum CurrentDepartment {
 
 enum RegistrationType {
   New_Claim_Notification
+  Claim_for_Approval
   Subrogation
   Third_Party_Recovery
   Reinsurance
