@@ -48,6 +48,7 @@ import {
   currentRoleForActivity,
   isLastInChain,
   nextRoleInChain,
+  canActOnClaimDivisionStage,
 } from "@/lib/roleConfig";
 import { findApproversByRoleAndLocation } from "@/lib/userMatching";
 import { statusForCompletedStage } from "@/lib/statusMapping";
@@ -125,6 +126,8 @@ const stageInfoLabel = (name = "") => {
   if (n.includes("decision")) return "See decision info";
   if (n.includes("payment") || n.includes("discharge"))
     return "See payment info";
+  if (n.includes("closure") || n.includes("closed"))
+    return "See claim link info";
   return "See stage info";
 };
 
@@ -201,6 +204,20 @@ const isPrincipalAssignStageName = (name = "") => {
     name === "Claim Review & Assignment"
   );
 };
+
+const isSurveyRequestStage = (name = "") => {
+  const n = (name || "").toLowerCase();
+  return (
+    n.includes("survey") &&
+    (n.includes("damage assessment request") ||
+      n === "survey & damage assessment request")
+  );
+};
+
+const requiresFullRegistration = (stage, claim) =>
+  claim?.workflow_type !== "GIO_Approval" &&
+  claim?.registration_complete !== true &&
+  isSurveyRequestStage(stage?.stage_name);
 
 function toYesNo(v) {
   if (v === true || v === "Yes" || v === "yes") return "Yes";
@@ -406,16 +423,24 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const getActivityForStage = (stageName) =>
     activities.find((a) => a.stage_name === stageName);
 
-  // Escalation-aware: if the stage has a chain, "mine" means my role
-  // is whoever currently holds it (activity.responsible_role), not
-  // just the stage's original entry-level role.
   const isMyStage = (stage, activity) => {
     if (user?.role === "admin") return true;
-    if (!isEscalationStage(stage.stage_name)) {
-      return stage.responsible_role === user?.role;
+
+    // Escalation stages: who currently holds the stage
+    if (isEscalationStage(stage.stage_name)) {
+      const current = currentRoleForActivity(stage, activity);
+      // exact holder OR higher role in Claim Division hierarchy
+      return (
+        current === user?.role ||
+        canActOnClaimDivisionStage(user?.role, current)
+      );
     }
-    const current = currentRoleForActivity(stage, activity);
-    return current === user?.role;
+
+    // Normal stages: stage's responsible_role OR higher in hierarchy
+    return (
+      stage.responsible_role === user?.role ||
+      canActOnClaimDivisionStage(user?.role, stage.responsible_role)
+    );
   };
 
   const visibleStages = stages;
@@ -521,6 +546,16 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       return;
     }
 
+    if (requiresFullRegistration(stage, claim) && newStatus !== "On Hold") {
+      toast({
+        title: "Complete full registration first",
+        description:
+          "Fill policy number, claim amount, and incident date, then return to complete this stage.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const isRegStage =
       stage.stage_name === "Claim Receipt & Registration" ||
       stage.stage_name === "Approval Case Registration";
@@ -532,7 +567,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
 
     setActionModal({ stage, activity, newStatus });
     setComments(prefill.correction_comments || "");
-    setStageData(prefill); // ONLY set once — do not overwrite below
+    setStageData(prefill);
     setReviewDate(prefill.review_date || "");
     setSelectedAdjusterId(
       activity?.registration_data?.assigned_adjuster_id || "",
@@ -541,6 +576,42 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       activity?.registration_data?.principal_of_claim_id || "",
     );
     setCompletionChoice("forward");
+
+    // Closure: prefer activity data; else claim-level recovery flags
+    if (
+      stage.stage_name === "Closure" ||
+      stage.stage_name === "Approval Case Closure"
+    ) {
+      const fromActivity = activity?.registration_data || {};
+      setStageData({
+        is_recovery:
+          fromActivity.is_recovery ??
+          (claim?.is_recovery
+            ? "Yes"
+            : claim?.is_recovery === false
+              ? "No"
+              : ""),
+        is_subrogation:
+          fromActivity.is_subrogation ??
+          (claim?.is_subrogation
+            ? "Yes"
+            : claim?.is_subrogation === false
+              ? "No"
+              : ""),
+        is_reinsurance:
+          fromActivity.is_reinsurance ??
+          (claim?.is_reinsurance
+            ? "Yes"
+            : claim?.is_reinsurance === false
+              ? "No"
+              : ""),
+        final_status_remark: fromActivity.final_status_remark || "",
+        claim_closed_date:
+          fromActivity.claim_closed_date ||
+          new Date().toISOString().slice(0, 10),
+        ...fromActivity,
+      });
+    }
 
     if (isAdjusterAssignStage(stage.stage_name)) await loadAdjusters();
     if (isPrincipalAssignStageName(stage.stage_name)) await loadPrincipals();
@@ -786,14 +857,43 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       const stage = actionModal.stage;
       const existing = actionModal.activity;
       const uiStatus = actionModal.newStatus;
+      if (requiresFullRegistration(stage, claim) && uiStatus !== "On Hold") {
+        toast({
+          title: "Complete full registration first",
+          description:
+            "Open Complete registration, save full details, then complete this stage.",
+          variant: "destructive",
+        });
+        setProcessing(false);
+        return;
+      }
       const prismaStatus = toPrismaStatus(uiStatus);
       const now = new Date().toISOString();
-      const actorName = actingUserName || user.full_name || null;
+      const rawName =
+        actingUserName ||
+        [user?.first_name, user?.middle_name]
+          .filter(Boolean)
+          .join(" ")
+          .trim() ||
+        null ||
+        (user?.full_name && !String(user.full_name).includes("@")
+          ? user.full_name
+          : null);
+
+      // Admin (and similar) may have no staff name — use role label instead of blocking
+      const actorName =
+        rawName ||
+        (user?.role === "admin"
+          ? ROLE_LABELS.admin || "System Administrator"
+          : null) ||
+        ROLE_LABELS[user?.role] ||
+        null;
 
       if (!actorName || String(actorName).includes("@")) {
         toast({
           title: "Name not loaded",
-          description: "Your staff first/middle name is missing.",
+          description:
+            "Your staff first/middle name is missing. Update your user profile or staff record.",
           variant: "destructive",
         });
         setProcessing(false);
@@ -952,6 +1052,19 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             ? Number(selected.bid_amount)
             : Math.min(...amounts);
         }
+      }
+
+      let claimAmountFromPayment = null;
+      if (
+        stage.stage_name === "Discharge & Payment Preparation" &&
+        stageData?.final_payment_amount !== undefined &&
+        stageData?.final_payment_amount !== null &&
+        stageData?.final_payment_amount !== "" &&
+        !Number.isNaN(Number(stageData.final_payment_amount))
+      ) {
+        claimAmountFromPayment = parseFloat(
+          String(stageData.final_payment_amount),
+        );
       }
 
       const activityData = {
@@ -1130,6 +1243,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             ...(claimAmountFromBids != null && {
               claim_amount: claimAmountFromBids,
             }),
+            ...(claimAmountFromPayment != null && {
+              claim_amount: claimAmountFromPayment,
+            }),
           });
 
           // Ensure next activity exists
@@ -1170,7 +1286,11 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             });
           }
         } else {
-          // Final stage
+          const isClosureStage =
+            stage.stage_name === "Closure" ||
+            stage.stage_name === "Approval Case Closure";
+          const toBool = (v) => v === "Yes" || v === true;
+
           await api.put(`/claims/${claim.id}`, {
             workflow_stage: stage.stage_name,
             workflow_stage_order: stage.stage_order,
@@ -1181,6 +1301,14 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             ...(!claimHasFinalStatus && {
               status: mappedStatus,
               ...(isFinalStage && { closure_date: now }),
+            }),
+            ...(isClosureStage && {
+              is_recovery: toBool(stageData.is_recovery),
+              is_subrogation: toBool(stageData.is_subrogation),
+              is_reinsurance: toBool(stageData.is_reinsurance),
+            }),
+            ...(claimAmountFromPayment != null && {
+              claim_amount: claimAmountFromPayment,
             }),
           });
 

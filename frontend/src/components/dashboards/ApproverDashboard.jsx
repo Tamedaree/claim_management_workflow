@@ -35,6 +35,7 @@ import {
   Cell,
 } from "recharts";
 import ClaimWorkStatus from "@/components/dashboards/ClaimWorkStatus";
+import { dedupeClosedWhenActiveExists } from "@/lib/claimDedupe";
 
 const PIE_COLORS = [
   "#2563eb",
@@ -187,6 +188,11 @@ export default function ApproverDashboard() {
     };
   }, [scope]);
 
+    const claimsVisible = useMemo(
+    () => dedupeClosedWhenActiveExists(claims),
+    [claims],
+  );
+
   const statusList = useMemo(() => {
     if (scope === "GIO_Approval") return GIO_STATUS_LIST || [];
     if (scope === "Claim_Division") {
@@ -203,13 +209,13 @@ export default function ApproverDashboard() {
 
   const myPending = useMemo(() => {
     if (!user) return [];
-    return claims.filter(
+    return claimsVisible.filter(
       (c) =>
         isAssignedToMe(c, user) &&
         !DONE_FOR_PENDING.has(c.status) &&
         !isCompletedClaim(c),
     );
-  }, [claims, user]);
+  }, [claimsVisible, user]);
 
   const aging = useMemo(() => {
     return myPending.filter((c) => {
@@ -221,13 +227,13 @@ export default function ApproverDashboard() {
   }, [myPending, now]);
 
   const completedClaims = useMemo(
-    () => claims.filter((c) => isCompletedClaim(c)),
-    [claims],
+    () => claimsVisible.filter((c) => isCompletedClaim(c)),
+    [claimsVisible],
   );
 
   const inProgressClaims = useMemo(
-    () => claims.filter((c) => isInProgressClaim(c)),
-    [claims],
+    () => claimsVisible.filter((c) => isInProgressClaim(c)),
+    [claimsVisible],
   );
 
   if (loading) {
@@ -238,7 +244,7 @@ export default function ApproverDashboard() {
     );
   }
 
-  const allClaims = claims;
+  const allClaims = claimsVisible;
   const claimDivisionClaims = allClaims.filter(isClaimDivision);
   const gioClaims = allClaims.filter(isGio);
   const totalAmount = allClaims.reduce(

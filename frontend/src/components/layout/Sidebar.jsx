@@ -50,7 +50,7 @@ export default function Sidebar({
       label: "Register Claim",
       icon: FileText,
       path: "/claims/register",
-      show: canRegisterClaims(role) && role !== "admin",
+      show: canRegisterClaims(role) && role !== "admin" && role!== "claim_adjuster",
     },
     {
       label: "My Claims",

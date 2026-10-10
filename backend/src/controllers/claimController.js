@@ -234,9 +234,11 @@ export const createClaim = async (req, res, next) => {
 
     const lossDate = incident_date
       ? new Date(incident_date)
-      : date_received
-        ? new Date(date_received)
-        : new Date();
+      : wantsFull
+        ? date_received
+          ? new Date(date_received)
+          : new Date()
+        : null;
 
     const registrationComplete = registration_complete === true;
     const now = new Date();

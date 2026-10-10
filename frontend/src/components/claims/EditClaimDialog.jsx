@@ -21,10 +21,11 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import {
   INSURANCE_TYPES,
-  FORWARDING_OFFICE_TYPES,
   FORWARDING_OFFICES,
   GIO_CASE_REASONS,
   toEnumKey,
+  GIO_FORWARDING_OFFICE_TYPES,
+  CLAIM_DIVISION_FORWARDING_OFFICE_TYPES,
 } from "@/lib/roleConfig";
 
 /**
@@ -120,9 +121,22 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
       if (field === "originating_office_type") {
         next.originating_office = "";
       }
+      // When Final approval amount is entered, mirror it to Claim amount
+      if (
+        field === "final_approval_amount" &&
+        value !== "" &&
+        !Number.isNaN(Number(value))
+      ) {
+        next.claim_amount = value;
+      }
       return next;
     });
   };
+
+  const officeTypeOptions =
+    claim.workflow_type === "GIO_Approval"
+      ? GIO_FORWARDING_OFFICE_TYPES || []
+      : CLAIM_DIVISION_FORWARDING_OFFICE_TYPES || [];
 
   const officeList =
     form.originating_office_type &&
@@ -148,6 +162,17 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
 
     setSaving(true);
     try {
+      const finalAmt =
+        form.final_approval_amount !== "" &&
+        form.final_approval_amount != null &&
+        !Number.isNaN(Number(form.final_approval_amount))
+          ? parseFloat(String(form.final_approval_amount))
+          : null;
+
+      // If final approval is set, claim_amount becomes that value
+      const amountToSave =
+        finalAmt != null ? finalAmt : parseFloat(String(form.claim_amount));
+
       await api.put(`/claims/${claim.id}`, {
         claim_reference: form.claim_reference,
         policy_number: form.policy_number || null,
@@ -155,7 +180,7 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
         insurance_type: form.insurance_type,
         plate_number:
           form.insurance_type === "Motor" ? form.plate_number || null : null,
-        claim_amount: parseFloat(String(form.claim_amount)),
+        claim_amount: amountToSave,
         incident_date: form.incident_date,
         incident_description: form.incident_description || null,
         originating_office_type: form.originating_office_type
@@ -164,18 +189,13 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
         originating_office: form.originating_office || null,
         priority: form.priority || "Medium",
         remarks: form.remarks || null,
-        ...(form.workflow_type === "GIO_Approval"
+        ...(claim.workflow_type === "GIO_Approval"
           ? {
               gio_case_reason: form.gio_case_reason || null,
-              final_approval_amount:
-                form.final_approval_amount !== "" &&
-                form.final_approval_amount != null
-                  ? parseFloat(String(form.final_approval_amount))
-                  : null,
+              final_approval_amount: finalAmt,
             }
           : {}),
       });
-
       toast({ title: "Claim updated" });
       onOpenChange(false);
       if (onSaved) onSaved();
@@ -302,7 +322,7 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
                 <SelectValue placeholder="Select type" />
               </SelectTrigger>
               <SelectContent>
-                {FORWARDING_OFFICE_TYPES.map((t) => (
+                {officeTypeOptions.map((t) => (
                   <SelectItem key={t} value={t}>
                     {t.replace(/_/g, " ")}
                   </SelectItem>

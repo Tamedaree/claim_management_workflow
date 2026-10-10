@@ -40,6 +40,7 @@ import {
   isClaimOverdue,
 } from "@/lib/roleConfig";
 import EditClaimDialog from "@/components/claims/EditClaimDialog";
+import { dedupeClosedWhenActiveExists } from "@/lib/claimDedupe";
 
 const PAGE_SIZE = 50;
 
@@ -103,7 +104,12 @@ export default function PrincipalClaimOfficerDashboard() {
     return map;
   }, [users]);
 
-  const filtered = claims.filter((c) => {
+  const claimsVisible = useMemo(
+    () => dedupeClosedWhenActiveExists(claims),
+    [claims],
+  );
+
+  const filtered = claimsVisible.filter((c) => {
     const matchSearch =
       !search ||
       c.claim_reference?.toLowerCase().includes(search.toLowerCase()) ||
@@ -127,14 +133,14 @@ export default function PrincipalClaimOfficerDashboard() {
   const showingFrom = filtered.length === 0 ? 0 : startIdx + 1;
   const showingTo = Math.min(startIdx + PAGE_SIZE, filtered.length);
 
-  const pendingClaims = claims.filter(
+  const pendingClaims = claimsVisible.filter(
     (c) =>
       !["Approved", "Rejected", "Claim_Closed", "Closed"].includes(c.status),
   );
 
-  const overdueClaims = claims.filter((c) => isClaimOverdue(c));
+  const overdueClaims = claimsVisible.filter((c) => isClaimOverdue(c));
 
-  const inProgress = claims.filter((c) =>
+  const inProgress = claimsVisible.filter((c) =>
     [
       "Submitted",
       "Under_Review",
@@ -177,7 +183,7 @@ export default function PrincipalClaimOfficerDashboard() {
         {[
           {
             label: "Total Claims",
-            value: claims.length,
+            value: claimsVisible.length,
             icon: FileText,
             color: "text-blue-600 bg-blue-50",
           },

@@ -31,6 +31,7 @@ import {
 } from "@/lib/roleConfig";
 import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 import ExportButton from "@/components/ExportButton";
+import { dedupeClosedWhenActiveExists } from "@/lib/claimDedupe";
 import { format } from "date-fns";
 
 const PAGE_SIZE = 50;
@@ -95,6 +96,16 @@ export default function SecretaryDashboard() {
     return map;
   }, [users]);
 
+  const claimsVisible = useMemo(
+    () => dedupeClosedWhenActiveExists(claims),
+    [claims],
+  );
+
+  const processedByMe = useMemo(
+    () => claimsVisible.filter((c) => c.submitted_by_id === user?.id),
+    [claimsVisible, user?.id],
+  );
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -103,17 +114,16 @@ export default function SecretaryDashboard() {
     );
   }
 
-  const processedByMe = claims.filter((c) => c.submitted_by_id === user?.id);
-  const gioCases = claims.filter((c) => c.workflow_type === "GIO_Approval");
+  const gioCases = claimsVisible.filter((c) => c.workflow_type === "GIO_Approval");
   const myGioCases = gioCases.filter((c) => c.submitted_by_id === user?.id);
 
-  const pendingRegistration = claims.filter(
+  const pendingRegistration = claimsVisible.filter(
     (c) =>
       c.workflow_stage === "Claim Receipt & Registration" &&
       c.status !== "Draft",
   );
 
-  const pendingClosure = claims.filter(
+  const pendingClosure = claimsVisible.filter(
     (c) =>
       (c.workflow_stage === "Claim Closed" ||
         c.workflow_stage === "GIO Case Closure") &&

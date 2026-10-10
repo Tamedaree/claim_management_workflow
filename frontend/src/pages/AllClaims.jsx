@@ -75,6 +75,14 @@ const GIO_ROLES = new Set([
   "chief_of_gio",
 ]);
 
+const CLOSED_STATUSES = new Set([
+  "Claim_Closed",
+  "Closed",
+  "Completed",
+  "Approved",
+  "Rejected",
+]);
+
 const CLAIM_DIVISION_ROLES = new Set([
   "secretary",
   "claim_adjuster",
@@ -192,7 +200,7 @@ export default function AllClaims() {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("active");
   const [typeFilter, setTypeFilter] = useState("all");
   const [reasonFilter, setReasonFilter] = useState("all");
   const [editClaim, setEditClaim] = useState(null);
@@ -313,9 +321,11 @@ export default function AllClaims() {
       c.plate_number?.toLowerCase().includes(q);
 
     const matchStatus =
-      statusFilter === "all" ||
-      c.status === statusFilter ||
-      c.workflow_stage === statusFilter;
+      statusFilter === "all"
+        ? true
+        : statusFilter === "active"
+          ? !CLOSED_STATUSES.has(c.status) && !c.closure_date
+          : c.status === statusFilter || c.workflow_stage === statusFilter;
 
     const matchType = typeFilter === "all" || c.insurance_type === typeFilter;
 
@@ -325,8 +335,43 @@ export default function AllClaims() {
     return matchSearch && matchStatus && matchType && matchReason;
   });
 
+  const isClosedClaim = (c) =>
+    CLOSED_STATUSES.has(c.status) || !!c.closure_date;
+
+  // Hide closed GIO (or any) claim when a newer active case shares the same claim_number
+  const deduped = useMemo(() => {
+    const byClaimNo = new Map();
+
+    for (const c of filtered) {
+      const key = (c.claim_number || "").trim().toLowerCase();
+      if (!key) {
+        // no claim number → always keep
+        continue;
+      }
+      if (!byClaimNo.has(key)) byClaimNo.set(key, []);
+      byClaimNo.get(key).push(c);
+    }
+
+    const hideIds = new Set();
+
+    for (const [, group] of byClaimNo) {
+      if (group.length < 2) continue;
+
+      const active = group.filter((c) => !isClosedClaim(c));
+      const closed = group.filter((c) => isClosedClaim(c));
+
+      // If there is at least one active case for this claim number,
+      // hide all closed siblings (the "duplicate" closed rows)
+      if (active.length > 0 && closed.length > 0) {
+        for (const c of closed) hideIds.add(c.id);
+      }
+    }
+
+    return filtered.filter((c) => !hideIds.has(c.id));
+  }, [filtered]);
+
   const sorted = useMemo(() => {
-    let list = [...filtered];
+    let list = [...deduped];
 
     // Workflow column: arrow filters by stream
     if (sortKey === "workflow_type") {
@@ -351,7 +396,7 @@ export default function AllClaims() {
     });
 
     return list;
-  }, [filtered, sortKey, sortDir]);
+  }, [deduped, sortKey, sortDir]);
 
   const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
   const safePage = Math.min(page, totalPages);
@@ -582,6 +627,7 @@ export default function AllClaims() {
             <SelectValue placeholder="Status" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="active">Active only</SelectItem>
             <SelectItem value="all">All Statuses</SelectItem>
             {scope !== "GIO_Approval" && (
               <SelectItem value="Draft">Draft</SelectItem>

@@ -284,11 +284,30 @@ export const STAGE_FIELD_CONFIG = {
 
   Closure: [
     {
+      key: "is_recovery",
+      label: "Third Party Recovery",
+      type: "yesno",
+    },
+    {
+      key: "is_subrogation",
+      label: "Subrogation",
+      type: "yesno",
+    },
+    {
+      key: "is_reinsurance",
+      label: "Reinsurance",
+      type: "yesno",
+    },
+    {
       key: "final_status_remark",
       label: "Final Status / Remark",
       type: "textarea",
     },
-    { key: "claim_closed_date", label: "Claim Closed Date", type: "date" },
+    {
+      key: "claim_closed_date",
+      label: "Claim Closed Date",
+      type: "date",
+    },
   ],
 
   "Approval Review": [
@@ -301,11 +320,30 @@ export const STAGE_FIELD_CONFIG = {
 
   "Approval Case Closure": [
     {
+      key: "is_recovery",
+      label: "Third Party Recovery",
+      type: "yesno",
+    },
+    {
+      key: "is_subrogation",
+      label: "Subrogation",
+      type: "yesno",
+    },
+    {
+      key: "is_reinsurance",
+      label: "Reinsurance",
+      type: "yesno",
+    },
+    {
       key: "final_status_remark",
       label: "Final Status / Remark",
       type: "textarea",
     },
-    { key: "claim_closed_date", label: "Claim Closed Date", type: "date" },
+    {
+      key: "claim_closed_date",
+      label: "Claim Closed Date",
+      type: "date",
+    },
   ],
 };
 

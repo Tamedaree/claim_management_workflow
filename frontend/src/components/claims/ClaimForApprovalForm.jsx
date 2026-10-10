@@ -33,7 +33,7 @@ import {
 import {
   GIO_CASE_REASONS,
   INSURANCE_TYPES,
-  ORIGINATING_OFFICE_TYPE_OPTIONS,
+  APPROVAL_ORIGINATING_OFFICE_TYPE_OPTIONS,
   DISTRICT_OFFICES,
   MOTOR_VEHICLE_TYPES,
 } from "@/lib/roleConfig";
@@ -862,7 +862,7 @@ export default function ClaimForApprovalForm({ user }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(ORIGINATING_OFFICE_TYPE_OPTIONS || []).map((o) => (
+                {(APPROVAL_ORIGINATING_OFFICE_TYPE_OPTIONS || []).map((o) => (
                   <SelectItem key={o.value || o} value={o.value || o}>
                     {o.label || String(o).replace(/_/g, " ")}
                   </SelectItem>

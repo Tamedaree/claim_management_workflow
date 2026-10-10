@@ -527,22 +527,16 @@ export default function Reports() {
   }, [filtered]);
 
   // ---- Subrogation / Recovery-Linked ----
-  const recoveryRows = useMemo(() => {
+  const linkedClaimRows = useMemo(() => {
     return filtered
-      .filter((c) => c.is_subrogation || c.is_recovery || c.is_reinsurance)
+      .filter((c) => !!c[linkMeta.field])
       .map((c) => ({
         claim_reference: c.claim_reference,
         insured: c.claimant_name,
-        type: [
-          c.is_subrogation && "Subrogation",
-          c.is_recovery && "Recovery",
-          c.is_reinsurance && "Reinsurance",
-        ]
-          .filter(Boolean)
-          .join(", "),
         status: c.status,
+        amount: c.claim_amount,
       }));
-  }, [filtered]);
+  }, [filtered, linkMeta.field]);
 
   // ---- Approval / DoA Compliance ----
   const doaRows = useMemo(() => {
@@ -608,12 +602,14 @@ export default function Reports() {
         : "All Streams";
 
   const currentReportLabel =
-    effectiveReportType === "gio_monitoring"
-      ? "GIO Claim & Approval Monitoring"
-      : effectiveReportType === "gio_performance"
-        ? "GIO Approval Performance"
-        : REPORT_TYPES.find((r) => r.value === effectiveReportType)?.label ||
-          "Report";
+    effectiveReportType === "recovery"
+      ? linkMeta.label
+      : effectiveReportType === "gio_monitoring"
+        ? "GIO Claim & Approval Monitoring"
+        : effectiveReportType === "gio_performance"
+          ? "GIO Approval Performance"
+          : REPORT_TYPES.find((r) => r.value === effectiveReportType)?.label ||
+            "Report";
 
   // ---- Generic export: builds a table from whatever report is active ----
   function getExportTable() {
@@ -676,11 +672,11 @@ export default function Reports() {
         };
       case "recovery":
         return {
-          headers: ["Claim Ref", "Insured", "Type", "Status"],
-          rows: recoveryRows.map((r) => [
+          headers: ["Claim Ref", "Insured", "Amount (ETB)", "Status"],
+          rows: linkedClaimRows.map((r) => [
             r.claim_reference,
             r.insured,
-            r.type,
+            r.amount ?? "",
             r.status,
           ]),
         };
@@ -704,11 +700,17 @@ export default function Reports() {
       case "gio_monitoring":
         return {
           headers: [
+            "Claim Ref",
+            "Claim Number",
+            "Insured",
             "Case reason",
             "Insurance type",
             "Originating Office Type",
             "Originating Office",
-            "Final payment amount (ETB)",
+            "Final Claim Amount (ETB)",
+            "Additional Approved Claim Amount (ETB)",
+            "Difference (ETB)",
+            "Final payment / approval amount (ETB)",
             "Recovery links",
             "Completed",
             "Rejected",
@@ -736,25 +738,53 @@ export default function Reports() {
             ].includes(c.status);
             const inProgress = !completed && !rejected && !returned;
 
+            const rd = c.registration_data || {};
+
+            // Final Claim Amount = original / previous approved amount
+            const finalClaimAmount =
+              rd.previous_claim_amount != null &&
+              rd.previous_claim_amount !== ""
+                ? Number(rd.previous_claim_amount)
+                : c.final_approval_amount != null
+                  ? Number(c.final_approval_amount)
+                  : Number(c.claim_amount) || 0;
+
+            // Additional Approved = previous + new additional (or current claim amount if reopen)
+            const additionalApproved =
+              rd.additional_approved_amount != null &&
+              rd.additional_approved_amount !== ""
+                ? Number(rd.additional_approved_amount)
+                : rd.additional_approval_amount != null &&
+                    rd.additional_approval_amount !== ""
+                  ? finalClaimAmount + Number(rd.additional_approval_amount)
+                  : Number(c.claim_amount) || 0;
+
+            // Difference = Additional Approved − Final Claim Amount
+            const difference = additionalApproved - finalClaimAmount;
+
             const pay =
-              c.registration_data?.final_payment_amount ??
-              c.final_approval_amount ??
-              "";
+              rd.final_payment_amount ?? c.final_approval_amount ?? "";
 
             const recoveryLinks =
               [
-                c.is_recovery && "Third party recovery",
+                c.is_recovery && "Recovery",
                 c.is_subrogation && "Subrogation",
                 c.is_reinsurance && "Reinsurance",
               ]
                 .filter(Boolean)
-                .join("; ") || "None";
+                .join(", ") || "—";
 
             return [
+              c.claim_reference || "N/A",
+              c.claim_number || "—",
+              c.claimant_name || "—",
               reasonLabel,
               c.insurance_type || "—",
               String(c.originating_office_type || "—").replace(/_/g, " "),
               c.originating_office || "—",
+              finalClaimAmount,
+              additionalApproved,
+              difference,
               pay !== "" && pay != null ? Number(pay) : "",
               recoveryLinks,
               completed ? 1 : 0,
@@ -1808,15 +1838,32 @@ export default function Reports() {
 
           {reportType === "recovery" && (
             <Card className="border-0 shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">
-                  Subrogation / Recovery-Linked Claims
-                </CardTitle>
+              <CardHeader className="pb-2 space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {LINK_FLAG_OPTIONS.map((opt) => (
+                    <Button
+                      key={opt.value}
+                      type="button"
+                      size="sm"
+                      variant={linkFlag === opt.value ? "default" : "outline"}
+                      className="h-8 text-xs"
+                      onClick={() => setLinkFlag(opt.value)}
+                    >
+                      {opt.label}
+                    </Button>
+                  ))}
+                </div>
+                <div>
+                  <CardTitle className="text-sm">{linkMeta.label}</CardTitle>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Claims marked Yes for {linkMeta.label.toLowerCase()}.
+                  </p>
+                </div>
               </CardHeader>
               <CardContent className="overflow-x-auto">
-                {recoveryRows.length === 0 ? (
+                {linkedClaimRows.length === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-8">
-                    No linked claims in this period
+                    No {linkMeta.label.toLowerCase()} claims in this period
                   </p>
                 ) : (
                   <Table>
@@ -1824,18 +1871,22 @@ export default function Reports() {
                       <TableRow>
                         <TableHead className="text-xs">Claim Ref</TableHead>
                         <TableHead className="text-xs">Insured</TableHead>
-                        <TableHead className="text-xs">Type</TableHead>
+                        <TableHead className="text-xs">Amount (ETB)</TableHead>
                         <TableHead className="text-xs">Status</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {recoveryRows.map((r, i) => (
+                      {linkedClaimRows.map((r, i) => (
                         <TableRow key={i}>
                           <TableCell className="text-xs font-medium">
                             {r.claim_reference}
                           </TableCell>
                           <TableCell className="text-xs">{r.insured}</TableCell>
-                          <TableCell className="text-xs">{r.type}</TableCell>
+                          <TableCell className="text-xs">
+                            {r.amount != null
+                              ? Number(r.amount).toLocaleString()
+                              : "—"}
+                          </TableCell>
                           <TableCell>
                             <Badge
                               variant="secondary"

@@ -160,9 +160,7 @@ export async function registerClaim(
     policy_number: null,
     cover_type: null,
     claim_amount: 0,
-    incident_date:
-      normalizedClaimData.date_received ||
-      new Date().toISOString().slice(0, 10),
+    incident_date: null,
     incident_description: null,
     originating_office: normalizedClaimData.originating_office,
     originating_office_type: normalizedClaimData.originating_office_type,

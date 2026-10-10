@@ -275,8 +275,22 @@ export const ORIGINATING_OFFICE_TYPE_OPTIONS = [
   { value: "Head_Office", label: "Head Office" },
 ];
 
-// Kefla Ager (border-area) branches — remote/border-area branches forwarding claims to Head Office
-// Kefla Ager / remote & border-area branches (unique, full set)
+/** GIO case registration / GIO edit — no Kefla Ager */
+export const GIO_ORIGINATING_OFFICE_TYPE_OPTIONS =
+  ORIGINATING_OFFICE_TYPE_OPTIONS.filter(
+    (o) => o.value !== "Kefla_Ager_Branch",
+  );
+
+/** Claim for Approval — District / Head only (no Service Center, no Kefla Ager) */
+export const APPROVAL_ORIGINATING_OFFICE_TYPE_OPTIONS =
+  ORIGINATING_OFFICE_TYPE_OPTIONS.filter(
+    (o) => o.value !== "Kefla_Ager_Branch" && o.value !== "Service_Center",
+  );
+
+/** Claim Division edit — no Service Center */
+export const CLAIM_DIVISION_ORIGINATING_OFFICE_TYPE_OPTIONS =
+  ORIGINATING_OFFICE_TYPE_OPTIONS.filter((o) => o.value !== "Service_Center");
+
 export const KEFLA_AGER_BRANCHES = [
   "Humera Branch",
   "Gambella Branch",
@@ -420,6 +434,31 @@ export function canActOnGioStage(actorRole, stageRole) {
   return a > -1 && s > -1 && a > s;
 }
 
+/** Claim Division roles only (order = low → high). */
+export const CLAIM_DIVISION_HIERARCHY = [
+  "secretary",
+  "surveyor",
+  "claim_adjuster",
+  "principal_claim_officer",
+  "claim_manager",
+  "director",
+  "senior_director",
+  "ceo",
+];
+
+export function canActOnClaimDivisionStage(actorRole, stageRole) {
+  if (!actorRole) return false;
+  if (actorRole === "admin") return true;
+  if (!stageRole) return false;
+  if (actorRole === stageRole) return true;
+
+  const a = CLAIM_DIVISION_HIERARCHY.indexOf(actorRole);
+  const s = CLAIM_DIVISION_HIERARCHY.indexOf(stageRole);
+  // both in hierarchy and actor is higher
+  if (a > -1 && s > -1) return a > s;
+  return false;
+}
+
 // Operational roles work on claim stages (register data, complete stages, flow to next role)
 export const OPERATIONAL_ROLES = [
   "secretary",
@@ -489,11 +528,16 @@ export const WORKFLOW_SCOPE_BY_ROLE = {
   director: "all",
   senior_director: "all",
   ceo: "all",
+
+  // Claim Division only
   surveyor: "Claim_Division",
   claim_adjuster: "Claim_Division",
   principal_claim_officer: "Claim_Division",
   claim_manager: "Claim_Division",
+
+  // GIO only
   gio_claim_adjuster: "GIO_Approval",
+  gio_principal_claim_officer: "GIO_Approval", // ← ADD THIS
   gio_claim_manager: "GIO_Approval",
   chief_of_gio: "GIO_Approval",
 };
@@ -938,6 +982,18 @@ export const FORWARDING_OFFICES = {
   "District Office": DISTRICT_OFFICES,
   "Kefla Ager Branch": KEFLA_AGER_BRANCHES,
 };
+
+export const GIO_FORWARDING_OFFICE_TYPES = [
+  "Service Center",
+  "District Office",
+  // no Kefla Ager Branch
+];
+
+export const CLAIM_DIVISION_FORWARDING_OFFICE_TYPES = [
+  "District Office",
+  "Kefla Ager Branch",
+  // no Service Center
+];
 
 // Delegation of Authority limits (ETB) by role and class — per EIC delegation matrix
 // Director is shared between GIO and Claim Division

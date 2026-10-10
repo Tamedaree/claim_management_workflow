@@ -33,7 +33,7 @@ import {
 import {
   GIO_CASE_REASONS,
   INSURANCE_TYPES,
-  ORIGINATING_OFFICE_TYPE_OPTIONS,
+  GIO_ORIGINATING_OFFICE_TYPE_OPTIONS,
   SERVICE_CENTERS,
   DISTRICT_OFFICES,
   KEFLA_AGER_BRANCHES,
@@ -111,6 +111,14 @@ function validateForm(form) {
     errors.claim_amount = "Claim amount cannot be negative";
   }
 
+  if (
+    form.previous_claim_amount !== "" &&
+    form.additional_approval_amount !== "" &&
+    Number(form.additional_approval_amount) < 0
+  ) {
+    errors.additional_approval_amount = "Cannot be negative";
+  }
+
   if (!form.gio_case_reason) errors.gio_case_reason = "Case reason is required";
 
   if (form.is_recovery === "yes") {
@@ -144,8 +152,23 @@ function validateForm(form) {
   return errors;
 }
 
+function recomputeAdditionalApproved(formOrPartial) {
+  const prev = Number(formOrPartial.previous_claim_amount) || 0;
+  const add = Number(formOrPartial.additional_approval_amount) || 0;
+  const total = prev + add;
+  return total > 0 ? String(total) : "";
+}
+
 function buildPayload(form) {
   const yes = (v) => v === "yes";
+  const previous = Number(form.previous_claim_amount) || 0;
+  const additional = Number(form.additional_approval_amount) || 0;
+  const combined =
+    Number(form.additional_approved_amount) ||
+    previous + additional ||
+    Number(form.claim_amount) ||
+    0;
+
   return {
     ...form,
     garage_name: form.garage_name?.trim() || null,
@@ -154,10 +177,11 @@ function buildPayload(form) {
     is_reinsurance: yes(form.is_reinsurance),
     is_rebid: yes(form.is_rebid),
     has_independent_assessor: yes(form.has_independent_assessor),
+    claim_amount: combined,
     final_approval_amount:
       form.final_approval_amount !== ""
         ? Number(form.final_approval_amount)
-        : null,
+        : combined || null,
     rebid_participating_garages: yes(form.is_rebid)
       ? form.rebid_participating_garages
           .split(",")
@@ -197,6 +221,12 @@ function buildPayload(form) {
             recoverable_amount: parseFloat(form.recoverable_amount) || 0,
           }
         : null,
+      // Re-open audit
+      reopen_from_closed: previous > 0,
+      previous_claim_amount: previous || null,
+      additional_approval_amount: additional || null,
+      additional_approved_amount: combined || null,
+      received_reference_number: form.received_reference_number || null,
     },
   };
 }
@@ -213,6 +243,9 @@ const INITIAL = () => ({
   motor_vehicle_type: "",
   claim_amount: "",
   final_approval_amount: "",
+  previous_claim_amount: "", // from prior closed claim
+  additional_approval_amount: "", // user input
+  additional_approved_amount: "", // auto = previous + additional
   incident_date: "",
   incident_description: "",
   originating_office_type: "Service_Center",
@@ -267,8 +300,19 @@ export default function NewGioCaseForm({ user }) {
     useExistingClaimCheck("GIO_Approval");
 
   const set = (key, value) => {
-    setForm((p) => ({ ...p, [key]: value }));
-    // Clear this field's error as soon as the user changes it
+    setForm((p) => {
+      const next = { ...p, [key]: value };
+      if (
+        key === "additional_approval_amount" ||
+        key === "previous_claim_amount"
+      ) {
+        next.additional_approved_amount = recomputeAdditionalApproved(next);
+        if (next.additional_approved_amount !== "") {
+          next.claim_amount = next.additional_approved_amount;
+        }
+      }
+      return next;
+    });
     setErrors((p) => {
       if (!p[key]) return p;
       const next = { ...p };
@@ -332,6 +376,13 @@ export default function NewGioCaseForm({ user }) {
   };
 
   const applyClaimToForm = (latest, { open }) => {
+    const prevAmount =
+      latest.final_approval_amount != null
+        ? Number(latest.final_approval_amount)
+        : latest.claim_amount != null
+          ? Number(latest.claim_amount)
+          : 0;
+
     setForm((p) => ({
       ...p,
       claim_number: (latest.claim_number || p.claim_number || "").trim(),
@@ -345,12 +396,23 @@ export default function NewGioCaseForm({ user }) {
       cover_type: latest.cover_type || "",
       plate_number: latest.plate_number || "",
       motor_vehicle_type: latest.motor_vehicle_type || "",
-      claim_amount:
-        latest.claim_amount != null ? String(latest.claim_amount) : "",
+
+      // Amounts
+      previous_claim_amount: !open && prevAmount > 0 ? String(prevAmount) : "",
+      additional_approval_amount: "",
+      additional_approved_amount: "",
+      claim_amount: open
+        ? latest.claim_amount != null
+          ? String(latest.claim_amount)
+          : ""
+        : prevAmount > 0
+          ? String(prevAmount)
+          : "",
       final_approval_amount:
         latest.final_approval_amount != null
           ? String(latest.final_approval_amount)
           : "",
+
       incident_date: latest.incident_date
         ? String(latest.incident_date).slice(0, 10)
         : "",
@@ -762,6 +824,55 @@ export default function NewGioCaseForm({ user }) {
               />
             </div>
           </div>
+          {/* Re-open from closed claim — shown after claim-number lookup */}
+          {(form.previous_claim_amount || lookupMode === "reuse") && (
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4 p-3 rounded-lg bg-amber-50/70 border border-amber-100">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">
+                  Previous claim amount (ETB)
+                </Label>
+                <Input
+                  type="number"
+                  className="h-11 bg-muted/50"
+                  value={form.previous_claim_amount}
+                  readOnly
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  From the earlier closed case for this claim number
+                </p>
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">
+                  New additional approval amount (ETB)
+                </Label>
+                <Input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  className="h-11"
+                  value={form.additional_approval_amount}
+                  onChange={(e) =>
+                    set("additional_approval_amount", e.target.value)
+                  }
+                  placeholder="0.00"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs font-medium">
+                  Additional approved amount (ETB)
+                </Label>
+                <Input
+                  type="number"
+                  className="h-11 bg-muted/50 font-semibold"
+                  value={form.additional_approved_amount}
+                  readOnly
+                />
+                <p className="text-[10px] text-muted-foreground">
+                  Previous + new additional
+                </p>
+              </div>
+            </div>
+          )}
 
           {form.insurance_type === "Motor" && (
             <div className="space-y-1.5">
@@ -909,7 +1020,7 @@ export default function NewGioCaseForm({ user }) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {ORIGINATING_OFFICE_TYPE_OPTIONS.map((o) => (
+                {GIO_ORIGINATING_OFFICE_TYPE_OPTIONS.map((o) => (
                   <SelectItem key={o.value} value={o.value}>
                     {o.label}
                   </SelectItem>
@@ -1340,11 +1451,66 @@ export default function NewGioCaseForm({ user }) {
               />
             </div>
             <div className="space-y-1">
-              <Label className="text-xs">Amount</Label>
+              <Label className="text-xs">Received reference number</Label>
+              <Input
+                value={form.received_reference_number}
+                onChange={(e) =>
+                  set("received_reference_number", e.target.value)
+                }
+              />
+            </div>
+
+            {lookupMode === "reuse" && (
+              <>
+                <div className="space-y-1">
+                  <Label className="text-xs">Previous claim amount (ETB)</Label>
+                  <Input
+                    type="number"
+                    value={form.previous_claim_amount}
+                    readOnly
+                    className="bg-muted/50"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    New additional approval amount (ETB)
+                  </Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={form.additional_approval_amount}
+                    onChange={(e) =>
+                      set("additional_approval_amount", e.target.value)
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">
+                    Additional approved amount (ETB)
+                  </Label>
+                  <Input
+                    type="number"
+                    value={form.additional_approved_amount}
+                    readOnly
+                    className="bg-muted/50 font-semibold"
+                  />
+                </div>
+              </>
+            )}
+
+            <div className="space-y-1">
+              <Label className="text-xs">
+                {lookupMode === "reuse"
+                  ? "Working claim amount (ETB)"
+                  : "Amount"}
+              </Label>
               <Input
                 type="number"
                 value={form.claim_amount}
                 onChange={(e) => set("claim_amount", e.target.value)}
+                readOnly={lookupMode === "reuse"}
+                className={lookupMode === "reuse" ? "bg-muted/50" : ""}
               />
             </div>
             <div className="space-y-1 md:col-span-2">

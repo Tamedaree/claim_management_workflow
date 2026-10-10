@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect,useMemo } from "react";
 import { useOutletContext, Link } from "react-router-dom";
 import api from "@/api/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -49,6 +49,7 @@ import {
 } from "@/lib/roleConfig";
 import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 import EditClaimDialog from "@/components/claims/EditClaimDialog";
+import { dedupeClosedWhenActiveExists } from "@/lib/claimDedupe";
 import ExportButton from "@/components/ExportButton";
 
 export default function GioClaimAdjusterDashboard() {
@@ -96,8 +97,13 @@ export default function GioClaimAdjusterDashboard() {
     }
   };
 
+  const claimsVisible = useMemo(
+    () => dedupeClosedWhenActiveExists(claims),
+    [claims],
+  );
+
   // Assigned / owned / current stage for this GIO adjuster
-  const myClaims = claims.filter((c) => {
+  const myClaims = claimsVisible.filter((c) => {
     if (c.workflow_type !== "GIO_Approval") return false;
 
     if (
@@ -120,7 +126,7 @@ export default function GioClaimAdjusterDashboard() {
   const baseList =
     myClaims.length > 0
       ? myClaims
-      : claims.filter((c) => c.workflow_type === "GIO_Approval");
+      : claimsVisible.filter((c) => c.workflow_type === "GIO_Approval");
 
   const filtered = baseList.filter((c) => {
     const matchSearch =
