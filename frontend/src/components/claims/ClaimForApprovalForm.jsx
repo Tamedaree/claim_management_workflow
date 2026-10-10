@@ -90,59 +90,119 @@ function reasonValue(r) {
 function validateForm(form) {
   const errors = {};
 
-  if (!form.claim_reference?.trim())
+  if (!form.claim_reference?.trim()) {
     errors.claim_reference = "Case reference is required";
+  }
 
-  if (!form.claim_number?.trim())
+  const cn = (form.claim_number || "").trim();
+  if (!cn) {
     errors.claim_number = "Claim number is required";
-  else if (form.claim_number.trim().length < 2)
-    errors.claim_number = "Enter a valid claim number";
+  } else if (cn.length < 3 || cn.length > 40) {
+    errors.claim_number = "Claim number must be 3–40 characters";
+  } else if (!/^[A-Za-z0-9/-]+$/.test(cn)) {
+    errors.claim_number =
+      "Claim number may only contain letters, numbers, - or /";
+  }
 
   if (!form.claimant_name?.trim()) {
     errors.claimant_name = "Claimant name is required";
   } else if (form.claimant_name.trim().length < 3) {
     errors.claimant_name = "At least 3 characters";
+  } else if (form.claimant_name.trim().length > 150) {
+    errors.claimant_name = "Must not exceed 150 characters";
   } else if (!/^[A-Za-zÀ-ÖØ-öø-ÿ\s'-]+$/.test(form.claimant_name.trim())) {
     errors.claimant_name = "Letters, spaces, hyphens, and apostrophes only";
   }
 
-  if (!form.insurance_type)
+  if (!form.insurance_type) {
     errors.insurance_type = "Insurance type is required";
-  if (!form.incident_date) errors.incident_date = "Incident date is required";
-
-  if (form.claim_amount === "" || Number.isNaN(Number(form.claim_amount))) {
-    errors.claim_amount = "Valid claim amount is required";
-  } else if (Number(form.claim_amount) < 0) {
-    errors.claim_amount = "Cannot be negative";
   }
 
-  if (!form.gio_case_reason)
-    errors.gio_case_reason = "Approval reason is required";
+  // Incident date
+  if (!form.incident_date) {
+    errors.incident_date = "Incident date is required";
+  } else {
+    const d = new Date(form.incident_date);
+    if (Number.isNaN(d.getTime())) {
+      errors.incident_date = "Enter a valid incident date";
+    } else {
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (d > today) {
+        errors.incident_date = "Incident date cannot be in the future";
+      } else {
+        const min = new Date();
+        min.setFullYear(min.getFullYear() - 25);
+        min.setHours(0, 0, 0, 0);
+        if (d < min) {
+          errors.incident_date =
+            "Incident date cannot be more than 25 years ago";
+        }
+      }
+    }
+  }
 
-  if (!form.originating_office?.trim())
+  // Amount > 0
+  if (form.claim_amount === "" || form.claim_amount == null) {
+    errors.claim_amount = "Claim amount is required";
+  } else if (Number.isNaN(Number(form.claim_amount))) {
+    errors.claim_amount = "Enter a valid number";
+  } else if (Number(form.claim_amount) <= 0) {
+    errors.claim_amount = "Claim amount must be greater than 0";
+  }
+
+  if (!form.gio_case_reason) {
+    errors.gio_case_reason = "Approval reason is required";
+  }
+
+  if (!form.originating_office?.trim()) {
     errors.originating_office = "Originating office is required";
+  }
 
   if (form.insurance_type === "Motor" && !form.plate_number?.trim()) {
     errors.plate_number = "Plate number is required for Motor";
   }
 
+  // Notification received date (if filled) — not in the future
+  if (form.notification_received_date) {
+    const rd = new Date(form.notification_received_date);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (!Number.isNaN(rd.getTime()) && rd > today) {
+      errors.notification_received_date =
+        "Received date cannot be in the future";
+    }
+  }
+
   if (form.is_recovery === "yes") {
-    if (!form.third_party_name?.trim())
+    if (!form.third_party_name?.trim()) {
       errors.third_party_name = "Third party name is required";
-    if (form.recovery_amount === "")
+    }
+    if (form.recovery_amount === "" || form.recovery_amount == null) {
       errors.recovery_amount = "Recovery amount is required";
+    } else if (Number(form.recovery_amount) < 0) {
+      errors.recovery_amount = "Cannot be negative";
+    }
   }
   if (form.is_subrogation === "yes") {
-    if (!form.subrogation_against?.trim())
+    if (!form.subrogation_against?.trim()) {
       errors.subrogation_against = "Subrogation party is required";
-    if (form.amount_to_recover === "")
+    }
+    if (form.amount_to_recover === "" || form.amount_to_recover == null) {
       errors.amount_to_recover = "Amount to recover is required";
+    } else if (Number(form.amount_to_recover) < 0) {
+      errors.amount_to_recover = "Cannot be negative";
+    }
   }
   if (form.is_reinsurance === "yes") {
-    if (!form.reinsurer_name?.trim())
+    if (!form.reinsurer_name?.trim()) {
       errors.reinsurer_name = "Reinsurer name is required";
-    if (form.recoverable_amount === "")
+    }
+    if (form.recoverable_amount === "" || form.recoverable_amount == null) {
       errors.recoverable_amount = "Recoverable amount is required";
+    } else if (Number(form.recoverable_amount) < 0) {
+      errors.recoverable_amount = "Cannot be negative";
+    }
   }
 
   return errors;
@@ -799,6 +859,7 @@ export default function ClaimForApprovalForm({ user }) {
             </Label>
             <Input
               type="date"
+              max={new Date().toISOString().slice(0, 10)}
               className={`h-11 ${errors.incident_date ? "border-red-500" : ""}`}
               value={form.incident_date}
               onChange={(e) => set("incident_date", e.target.value)}

@@ -33,6 +33,60 @@ import ExistingClaimAlert from "@/components/claims/ExistingClaimAlert";
 const fieldClass = "space-y-1.5";
 const labelClass = "text-xs font-medium text-muted-foreground";
 
+function FieldError({ message }) {
+  if (!message) return null;
+  return <p className="text-[11px] text-red-500 mt-1">{message}</p>;
+}
+
+function validateNotificationForm(form) {
+  const errors = {};
+
+  const ref = (form.claim_reference || "").trim();
+  if (!ref) {
+    errors.claim_reference = "Claim reference is required";
+  } else if (ref.length < 3) {
+    errors.claim_reference = "Reference must be at least 3 characters";
+  }
+
+  if (!form.claimant_name?.trim()) {
+    errors.claimant_name = "Insured name is required";
+  } else if (form.claimant_name.trim().length < 3) {
+    errors.claimant_name = "At least 3 characters";
+  } else if (!/^[A-Za-zÀ-ÖØ-öø-ÿ\s'-]+$/.test(form.claimant_name.trim())) {
+    errors.claimant_name = "Letters, spaces, hyphens, and apostrophes only";
+  }
+
+  if (!form.insurance_type) {
+    errors.insurance_type = "Insurance type is required";
+  }
+
+  if (form.insurance_type === "Motor") {
+    if (!(form.plate_number || "").trim()) {
+      errors.plate_number = "Plate number is required for Motor";
+    }
+  }
+
+  if (!form.originating_office_type) {
+    errors.originating_office_type = "Office type is required";
+  }
+  if (!(form.originating_office || "").trim()) {
+    errors.originating_office = "Office is required";
+  }
+
+  if (form.date_received) {
+    const d = new Date(form.date_received);
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+    if (Number.isNaN(d.getTime())) {
+      errors.date_received = "Enter a valid date";
+    } else if (d > today) {
+      errors.date_received = "Date received cannot be in the future";
+    }
+  }
+
+  return errors;
+}
+
 export default function NewClaimNotificationForm({ user }) {
   const navigate = useNavigate();
   const { toast } = useToast();
@@ -40,6 +94,7 @@ export default function NewClaimNotificationForm({ user }) {
   const [claimantMode, setClaimantMode] = useState("new");
   const [existingClaimants, setExistingClaimants] = useState([]);
   const { existingClaim, check } = useExistingClaimCheck();
+  const [errors, setErrors] = useState({});
 
   const [form, setForm] = useState({
     claim_reference: "",
@@ -60,15 +115,29 @@ export default function NewClaimNotificationForm({ user }) {
       .catch(() => {});
   }, []);
 
-  const handleChange = (field, value) =>
+  const handleChange = (field, value) => {
     setForm((f) => ({ ...f, [field]: value }));
+    setErrors((e) => {
+      if (!e[field]) return e;
+      const next = { ...e };
+      delete next[field];
+      return next;
+    });
+  };
 
-  const handleOfficeTypeChange = (value) =>
+  const handleOfficeTypeChange = (value) => {
     setForm((f) => ({
       ...f,
       originating_office_type: value,
       originating_office: "",
     }));
+    setErrors((e) => {
+      const next = { ...e };
+      delete next.originating_office_type;
+      delete next.originating_office;
+      return next;
+    });
+  };
 
   const officeOptions = useMemo(
     () =>
@@ -84,24 +153,17 @@ export default function NewClaimNotificationForm({ user }) {
   };
 
   const handleSubmit = async (asDraft) => {
-    if (
-      !form.claim_reference ||
-      !form.claimant_name ||
-      !form.insurance_type ||
-      !form.originating_office_type ||
-      !form.originating_office ||
-      (form.insurance_type === "Motor" && !form.plate_number)
-    ) {
+    const fieldErrors = validateNotificationForm(form);
+    if (Object.keys(fieldErrors).length > 0) {
+      setErrors(fieldErrors);
       toast({
-        title: "Missing fields",
-        description:
-          "Reference, insured, type, forwarding office" +
-          (form.insurance_type === "Motor" ? ", plate number" : "") +
-          " are required.",
+        title: "Missing or invalid fields",
+        description: "Please fix the highlighted fields.",
         variant: "destructive",
       });
       return;
     }
+    setErrors({});
 
     setSubmitting(true);
     try {
@@ -174,7 +236,7 @@ export default function NewClaimNotificationForm({ user }) {
             <div className={fieldClass}>
               <Label className={labelClass}>Claim reference *</Label>
               <Input
-                className="h-10"
+                className={`h-10 ${errors.claim_reference ? "border-red-500" : ""}`}
                 value={form.claim_reference}
                 onChange={(e) =>
                   handleChange("claim_reference", e.target.value)
@@ -182,6 +244,7 @@ export default function NewClaimNotificationForm({ user }) {
                 onBlur={(e) => check(e.target.value)}
                 placeholder="e.g. CLM-2026-001234"
               />
+              <FieldError message={errors.claim_reference} />
             </div>
 
             <div className={fieldClass}>
@@ -235,9 +298,11 @@ export default function NewClaimNotificationForm({ user }) {
                   onChange={(e) =>
                     handleChange("claimant_name", e.target.value)
                   }
+                  className={`h-10 ${errors.claimant_name ? "border-red-500" : ""}`}
                   placeholder="Enter insured name"
                 />
               )}
+              <FieldError message={errors.claimant_name} />
             </div>
 
             <div className={fieldClass}>
@@ -245,6 +310,7 @@ export default function NewClaimNotificationForm({ user }) {
               <Select
                 value={form.insurance_type}
                 onValueChange={(v) => handleChange("insurance_type", v)}
+                className={`h-10 ${errors.insurance_type ? "border-red-500" : ""}`}
               >
                 <SelectTrigger className="h-10">
                   <SelectValue placeholder="Select type" />
@@ -257,17 +323,19 @@ export default function NewClaimNotificationForm({ user }) {
                   ))}
                 </SelectContent>
               </Select>
+              <FieldError message={errors.insurance_type} />
             </div>
 
             {form.insurance_type === "Motor" && (
               <div className={fieldClass}>
                 <Label className={labelClass}>Plate number *</Label>
                 <Input
-                  className="h-10 font-mono"
+                  className={`h-10 font-mono ${errors.plate_number ? "border-red-500" : ""}`}
                   value={form.plate_number}
                   onChange={(e) => handleChange("plate_number", e.target.value)}
                   placeholder="e.g. AA-123456"
                 />
+                <FieldError message={errors.plate_number} />
               </div>
             )}
 
@@ -307,6 +375,7 @@ export default function NewClaimNotificationForm({ user }) {
               <Select
                 value={form.originating_office_type}
                 onValueChange={handleOfficeTypeChange}
+                className={`h-10 ${errors.originating_office_type ? "border-red-500" : ""}`}
               >
                 <SelectTrigger className="h-10">
                   <SelectValue placeholder="Select office type" />
@@ -319,6 +388,7 @@ export default function NewClaimNotificationForm({ user }) {
                   ))}
                 </SelectContent>
               </Select>
+              <FieldError message={errors.originating_office_type} />
             </div>
 
             <div className={fieldClass}>
@@ -327,6 +397,7 @@ export default function NewClaimNotificationForm({ user }) {
                 value={form.originating_office}
                 onValueChange={(v) => handleChange("originating_office", v)}
                 disabled={!form.originating_office_type}
+                className={`h-10 ${errors.originating_office ? "border-red-500" : ""}`}
               >
                 <SelectTrigger className="h-10">
                   <SelectValue
@@ -361,11 +432,13 @@ export default function NewClaimNotificationForm({ user }) {
             <div className={fieldClass}>
               <Label className={labelClass}>Date received</Label>
               <Input
-                className="h-10"
+                className={`h-10 ${errors.date_received ? "border-red-500" : ""}`}
                 type="date"
+                max={new Date().toISOString().slice(0, 10)}
                 value={form.date_received}
                 onChange={(e) => handleChange("date_received", e.target.value)}
               />
+              <FieldError message={errors.date_received} />
             </div>
           </div>
 

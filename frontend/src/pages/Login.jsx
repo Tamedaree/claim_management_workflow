@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,6 +23,9 @@ function LoginLogoIcon({ className }) {
 
 export default function Login() {
   const { login } = useAuth();
+  const [searchParams] = useSearchParams();
+  const reason = searchParams.get("reason");
+  const idleMins = searchParams.get("minutes") || "30";
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
@@ -63,6 +66,12 @@ export default function Login() {
         <div className="mb-4 p-3 rounded-lg bg-destructive/10 text-destructive text-sm flex items-start gap-2">
           <ShieldCheck className="w-4 h-4 mt-0.5 shrink-0" />
           <span>{error}</span>
+        </div>
+      )}
+      {reason === "idle" && !error && (
+        <div className="mb-4 p-3 rounded-lg bg-amber-50 text-amber-900 text-sm border border-amber-200">
+          Your session expired after <strong>{idleMins} minutes</strong> of
+          inactivity. Please log in again.
         </div>
       )}
 
@@ -147,6 +156,10 @@ export default function Login() {
             "Log in"
           )}
         </Button>
+        <p className="text-[11px] text-muted-foreground text-center pt-2">
+          For security, inactive sessions are closed after{" "}
+          <strong>{idleMins}</strong> minutes.
+        </p>
       </form>
     </AuthLayout>
   );

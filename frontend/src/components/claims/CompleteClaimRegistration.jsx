@@ -19,6 +19,62 @@ import { MOTOR_COVER_TYPES } from "@/lib/roleConfig";
 import FileUploadSection from "@/components/claims/FileUploadSection";
 import ExistingClaimAlert from "@/components/claims/ExistingClaimAlert";
 
+function FieldError({ message }) {
+  if (!message) return null;
+  return <p className="text-[11px] text-red-500 mt-1">{message}</p>;
+}
+
+function validateCompleteRegistration(form) {
+  const errors = {};
+
+  const cn = (form.claim_number || "").trim();
+  if (!cn) {
+    errors.claim_number = "Claim number is required";
+  } else if (cn.length < 3 || cn.length > 40) {
+    errors.claim_number = "Claim number must be 3–40 characters";
+  } else if (!/^[A-Za-z0-9/-]+$/.test(cn)) {
+    errors.claim_number =
+      "Claim number may only contain letters, numbers, - or /";
+  }
+
+  if (form.claim_amount === "" || form.claim_amount == null) {
+    errors.claim_amount = "Claim amount is required";
+  } else if (Number.isNaN(Number(form.claim_amount))) {
+    errors.claim_amount = "Enter a valid number";
+  } else if (Number(form.claim_amount) <= 0) {
+    errors.claim_amount = "Claim amount must be greater than 0";
+  }
+
+  if (!form.incident_date) {
+    errors.incident_date = "Date of loss is required";
+  } else {
+    const d = new Date(form.incident_date);
+    if (Number.isNaN(d.getTime())) {
+      errors.incident_date = "Enter a valid date";
+    } else {
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (d > today) {
+        errors.incident_date = "Date of loss cannot be in the future";
+      } else {
+        const min = new Date();
+        min.setFullYear(min.getFullYear() - 25);
+        min.setHours(0, 0, 0, 0);
+        if (d < min) {
+          errors.incident_date =
+            "Date of loss cannot be more than 25 years ago";
+        }
+      }
+    }
+  }
+
+  if (form.insurance_type === "Motor" && !(form.cover_type || "").trim()) {
+    errors.cover_type = "Type of cover is required for Motor";
+  }
+
+  return errors;
+}
+
 export default function CompleteClaimRegistration() {
   const { id } = useParams();
   const { user } = useOutletContext();
@@ -30,6 +86,7 @@ export default function CompleteClaimRegistration() {
   const [form, setForm] = useState(null);
   const [claimNumberConflict, setClaimNumberConflict] = useState(null);
   const [checkingClaimNo, setCheckingClaimNo] = useState(false);
+  const [errors, setErrors] = useState({});
 
   const checkClaimNumber = async (value) => {
     const v = String(value || "").trim();
@@ -99,25 +156,29 @@ export default function CompleteClaimRegistration() {
     })();
   }, [id, navigate, toast]);
 
-  const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
+  const set = (field, value) => {
+    setForm((f) => ({ ...f, [field]: value }));
+    setErrors((e) => {
+      if (!e[field]) return e;
+      const next = { ...e };
+      delete next[field];
+      return next;
+    });
+  };
 
   const handleSave = async () => {
-    if (
-      !form.policy_number ||
-      !form.claim_amount ||
-      !form.incident_date ||
-      (form.insurance_type === "Motor" && !form.cover_type)
-    ) {
+    const fieldErrors = validateCompleteRegistration(form);
+    if (Object.keys(fieldErrors).length > 0) {
+      setErrors(fieldErrors);
       toast({
-        title: "Missing fields",
-        description:
-          "Policy number, claim number, amount, date of loss" +
-          (form.insurance_type === "Motor" ? ", cover type" : "") +
-          " are required.",
+        title: "Missing or invalid fields",
+        description: "Please fix the highlighted fields.",
         variant: "destructive",
       });
       return;
     }
+    setErrors({});
+
     const conflict =
       claimNumberConflict || (await checkClaimNumber(form.claim_number));
     if (conflict) {
@@ -266,6 +327,7 @@ export default function CompleteClaimRegistration() {
             <div className="space-y-1.5">
               <Label className="text-xs">Claim number *</Label>
               <Input
+                className={errors.claim_number ? "border-red-500" : ""}
                 value={form.claim_number}
                 onChange={(e) => {
                   set("claim_number", e.target.value);
@@ -274,6 +336,7 @@ export default function CompleteClaimRegistration() {
                 onBlur={(e) => checkClaimNumber(e.target.value)}
                 placeholder="e.g. INSIS / internal claim no."
               />
+              <FieldError message={errors.claim_number} />
               {checkingClaimNo && (
                 <p className="text-[11px] text-muted-foreground">
                   Checking claim number…
@@ -286,6 +349,7 @@ export default function CompleteClaimRegistration() {
                 <Select
                   value={form.cover_type}
                   onValueChange={(v) => set("cover_type", v)}
+                  className={errors.cover_type ? "border-red-500" : ""}
                 >
                   <SelectTrigger>
                     <SelectValue placeholder="Select cover" />
@@ -298,23 +362,31 @@ export default function CompleteClaimRegistration() {
                     ))}
                   </SelectContent>
                 </Select>
+                <FieldError message={errors.cover_type} />
               </div>
             )}
             <div className="space-y-1.5">
               <Label className="text-xs">Claim Amount (ETB) *</Label>
               <Input
                 type="number"
+                min="0.01"
+                step="0.01"
+                className={errors.claim_amount ? "border-red-500" : ""}
                 value={form.claim_amount}
                 onChange={(e) => set("claim_amount", e.target.value)}
               />
+              <FieldError message={errors.claim_amount} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Date of Loss *</Label>
               <Input
                 type="date"
+                max={new Date().toISOString().slice(0, 10)}
+                className={errors.incident_date ? "border-red-500" : ""}
                 value={form.incident_date}
                 onChange={(e) => set("incident_date", e.target.value)}
               />
+              <FieldError message={errors.incident_date} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Priority</Label>

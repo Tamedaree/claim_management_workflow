@@ -12,6 +12,7 @@ export function AuthProvider({ children }) {
   const [authError, setAuthError] = useState(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [appPublicSettings] = useState(null);
+  const [idleMinutes, setIdleMinutes] = useState(30);
 
   // Bootstrap auth once on mount
   useEffect(() => {
@@ -63,6 +64,25 @@ export function AuthProvider({ children }) {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await api.get("/settings");
+        const mins = res.data?.data?.sec_auto_logout_minutes;
+        if (!cancelled && mins != null && Number(mins) > 0) {
+          setIdleMinutes(Number(mins));
+        }
+      } catch {
+        // non-admin or no route → keep 30
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated]);
 
   const checkUserAuth = async () => {
     try {
@@ -152,6 +172,45 @@ export function AuthProvider({ children }) {
     window.location.replace("/login");
   };
 
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    const idleMs = Math.max(1, Number(idleMinutes) || 30) * 60 * 1000;
+    let timer = null;
+
+    const kick = () => {
+      clearSession();
+      setUser(null);
+      setIsAuthenticated(false);
+      window.location.replace(
+        `/login?reason=idle&minutes=${encodeURIComponent(
+          String(idleMinutes || 30),
+        )}`,
+      );
+    };
+
+    const reset = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(kick, idleMs);
+    };
+
+    const events = [
+      "mousedown",
+      "mousemove",
+      "keydown",
+      "scroll",
+      "touchstart",
+      "click",
+    ];
+    events.forEach((e) => window.addEventListener(e, reset, { passive: true }));
+    reset();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, reset));
+    };
+  }, [isAuthenticated, idleMinutes]);
+
   return (
     <AuthContext.Provider
       value={{
@@ -162,6 +221,7 @@ export function AuthProvider({ children }) {
         authError,
         appPublicSettings,
         authChecked,
+        idleMinutes,
         login,
         logout,
         navigateToLogin,

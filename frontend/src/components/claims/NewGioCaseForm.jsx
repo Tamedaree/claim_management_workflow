@@ -83,14 +83,22 @@ function FieldError({ message }) {
 /** Returns an object of { fieldKey: errorMessage } for every invalid field */
 function validateForm(form) {
   const errors = {};
-  const e = {};
 
-  if (!form.claim_reference?.trim())
+  if (!form.claim_reference?.trim()) {
     errors.claim_reference = "Case reference is required";
-  if (!form.claim_number?.trim()) e.claim_number = "Required";
-  else if (form.claim_number.trim().length < 2) {
-    e.claim_number = "Enter a valid claim number";
   }
+
+  // Claim number — must write into `errors` (not a separate object)
+  const cn = (form.claim_number || "").trim();
+  if (!cn) {
+    errors.claim_number = "Claim number is required";
+  } else if (cn.length < 3 || cn.length > 40) {
+    errors.claim_number = "Claim number must be 3–40 characters";
+  } else if (!/^[A-Za-z0-9/-]+$/.test(cn)) {
+    errors.claim_number =
+      "Claim number may only contain letters, numbers, - or /";
+  }
+
   if (!form.claimant_name?.trim()) {
     errors.claimant_name = "Claimant name is required";
   } else if (form.claimant_name.trim().length < 3) {
@@ -101,43 +109,85 @@ function validateForm(form) {
     errors.claimant_name =
       "Claimant name may contain only letters, spaces, hyphens, and apostrophes";
   }
-  if (!form.insurance_type)
-    errors.insurance_type = "Insurance type is required";
-  if (!form.incident_date) errors.incident_date = "Incident date is required";
 
-  if (form.claim_amount === "" || Number.isNaN(Number(form.claim_amount))) {
-    errors.claim_amount = "Valid claim amount is required";
-  } else if (Number(form.claim_amount) < 0) {
-    errors.claim_amount = "Claim amount cannot be negative";
+  if (!form.insurance_type) {
+    errors.insurance_type = "Insurance type is required";
+  }
+
+  // Incident date — required, real date, not future, not older than 25 years
+  if (!form.incident_date) {
+    errors.incident_date = "Incident date is required";
+  } else {
+    const d = new Date(form.incident_date);
+    if (Number.isNaN(d.getTime())) {
+      errors.incident_date = "Enter a valid incident date";
+    } else {
+      const today = new Date();
+      today.setHours(23, 59, 59, 999);
+      if (d > today) {
+        errors.incident_date = "Incident date cannot be in the future";
+      } else {
+        const min = new Date();
+        min.setFullYear(min.getFullYear() - 25);
+        min.setHours(0, 0, 0, 0);
+        if (d < min) {
+          errors.incident_date =
+            "Incident date cannot be more than 25 years ago";
+        }
+      }
+    }
+  }
+
+  // Amount: required, number, > 0
+  if (form.claim_amount === "" || form.claim_amount == null) {
+    errors.claim_amount = "Claim amount is required";
+  } else if (Number.isNaN(Number(form.claim_amount))) {
+    errors.claim_amount = "Enter a valid number";
+  } else if (Number(form.claim_amount) <= 0) {
+    errors.claim_amount = "Claim amount must be greater than 0";
   }
 
   if (
-    form.previous_claim_amount !== "" &&
     form.additional_approval_amount !== "" &&
+    form.additional_approval_amount != null &&
     Number(form.additional_approval_amount) < 0
   ) {
     errors.additional_approval_amount = "Cannot be negative";
   }
 
-  if (!form.gio_case_reason) errors.gio_case_reason = "Case reason is required";
+  if (!form.gio_case_reason) {
+    errors.gio_case_reason = "Case reason is required";
+  }
 
   if (form.is_recovery === "yes") {
-    if (!form.third_party_name?.trim())
+    if (!form.third_party_name?.trim()) {
       errors.third_party_name = "Third party name is required";
-    if (form.recovery_amount === "")
+    }
+    if (form.recovery_amount === "" || form.recovery_amount == null) {
       errors.recovery_amount = "Recovery amount is required";
+    } else if (Number(form.recovery_amount) < 0) {
+      errors.recovery_amount = "Cannot be negative";
+    }
   }
   if (form.is_subrogation === "yes") {
-    if (!form.subrogation_against?.trim())
+    if (!form.subrogation_against?.trim()) {
       errors.subrogation_against = "Subrogation party is required";
-    if (form.amount_to_recover === "")
+    }
+    if (form.amount_to_recover === "" || form.amount_to_recover == null) {
       errors.amount_to_recover = "Amount to recover is required";
+    } else if (Number(form.amount_to_recover) < 0) {
+      errors.amount_to_recover = "Cannot be negative";
+    }
   }
   if (form.is_reinsurance === "yes") {
-    if (!form.reinsurer_name?.trim())
+    if (!form.reinsurer_name?.trim()) {
       errors.reinsurer_name = "Reinsurer name is required";
-    if (form.recoverable_amount === "")
+    }
+    if (form.recoverable_amount === "" || form.recoverable_amount == null) {
       errors.recoverable_amount = "Recoverable amount is required";
+    } else if (Number(form.recoverable_amount) < 0) {
+      errors.recoverable_amount = "Cannot be negative";
+    }
   }
   if (form.is_rebid === "yes" && !form.rebid_winner_garage?.trim()) {
     errors.rebid_winner_garage = "Winner garage is required when rebid is Yes";
@@ -670,7 +720,7 @@ export default function NewGioCaseForm({ user }) {
               placeholder="Business claim number"
               className={`font-mono h-11 ${errors.claim_number ? "border-red-500 focus-visible:ring-red-500" : ""}`}
             />
-            <FieldError name="claim_number" />
+            <FieldError message={errors.claim_number} />
             {checkingClaimNo && (
               <p className="text-[11px] text-muted-foreground">Looking up…</p>
             )}
@@ -803,9 +853,11 @@ export default function NewGioCaseForm({ user }) {
               </Label>
               <Input
                 type="number"
-                className={`h-11 ${errors.claim_amount ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+                min="0.01"
+                step="0.01"
                 value={form.claim_amount}
                 onChange={(e) => set("claim_amount", e.target.value)}
+                className={`h-11 ${errors.claim_amount ? "border-red-500 focus-visible:ring-red-500" : ""}`}
               />
               <FieldError message={errors.claim_amount} />
             </div>
@@ -900,9 +952,10 @@ export default function NewGioCaseForm({ user }) {
             </Label>
             <Input
               type="date"
-              className={`h-11 ${errors.incident_date ? "border-red-500 focus-visible:ring-red-500" : ""}`}
+              max={new Date().toISOString().slice(0, 10)}
               value={form.incident_date}
               onChange={(e) => set("incident_date", e.target.value)}
+              className={`h-11 ${errors.incident_date ? "border-red-500 focus-visible:ring-red-500" : ""}`}
             />
             <FieldError message={errors.incident_date} />
           </div>
