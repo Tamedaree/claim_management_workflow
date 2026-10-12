@@ -42,7 +42,7 @@ import {
 import EditClaimDialog from "@/components/claims/EditClaimDialog";
 import { dedupeClosedWhenActiveExists } from "@/lib/claimDedupe";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 function ownerDisplayName(ownerId, ownerName, usersById) {
   const u = ownerId ? usersById[ownerId] : null;

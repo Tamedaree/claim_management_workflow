@@ -64,7 +64,7 @@ import {
   buildGioPerformance,
 } from "@/lib/gioReportMetrics";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 const CLOSED_STATUSES = new Set([
   "Claim_Closed",

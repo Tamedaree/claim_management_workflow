@@ -34,7 +34,7 @@ import ExportButton from "@/components/ExportButton";
 import { dedupeClosedWhenActiveExists } from "@/lib/claimDedupe";
 import { format } from "date-fns";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 function personLabel(userOrNull, fallbackName) {
   if (userOrNull) {

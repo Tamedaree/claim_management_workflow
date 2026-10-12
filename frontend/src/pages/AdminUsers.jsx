@@ -65,7 +65,7 @@ import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 
 const ROLES = Object.entries(ROLE_LABELS);
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 const SORT_ACCESSORS = {
   name: (s) =>

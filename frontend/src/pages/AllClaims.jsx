@@ -65,7 +65,7 @@ import {
 import EditClaimDialog from "@/components/claims/EditClaimDialog";
 import ExportButton from "@/components/ExportButton";
 
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 10;
 
 const GIO_ROLES = new Set([
   "gio_claim_adjuster",
