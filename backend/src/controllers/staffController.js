@@ -309,12 +309,27 @@ export const deleteStaffMember = async (req, res, next) => {
       where: { email: staff.email },
     });
 
-    await prisma.$transaction([
-      prisma.staffMember.delete({ where: { id: req.params.id } }),
-      ...(linkedUser
-        ? [prisma.user.delete({ where: { email: staff.email } })]
-        : []),
-    ]);
+    // Optional: block deleting yourself if staff email matches logged-in user
+    if (linkedUser && linkedUser.id === req.user?.id) {
+      throw new ApiError(400, "You cannot delete your own account");
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (linkedUser) {
+        // Clear FK that blocks User delete
+        await tx.notification.deleteMany({
+          where: { user_id: linkedUser.id },
+        });
+
+        await tx.user.delete({
+          where: { id: linkedUser.id },
+        });
+      }
+
+      await tx.staffMember.delete({
+        where: { id: req.params.id },
+      });
+    });
 
     res.json({
       success: true,

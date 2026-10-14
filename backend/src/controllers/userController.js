@@ -314,13 +314,18 @@ export const deleteUser = async (req, res, next) => {
       throw new ApiError(404, "User not found");
     }
 
-    // Prevent deleting yourself
     if (user.id === req.user.id) {
       throw new ApiError(400, "You cannot delete your own account");
     }
 
-    await prisma.user.delete({
-      where: { id: req.params.id },
+    await prisma.$transaction(async (tx) => {
+      await tx.notification.deleteMany({
+        where: { user_id: user.id },
+      });
+
+      await tx.user.delete({
+        where: { id: user.id },
+      });
     });
 
     res.json({
