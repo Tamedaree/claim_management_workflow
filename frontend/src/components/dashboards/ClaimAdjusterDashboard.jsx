@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useOutletContext, Link } from "react-router-dom";
 import api from "@/api/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,22 +20,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogFooter,
-  AlertDialogAction,
-  AlertDialogCancel,
-} from "@/components/ui/alert-dialog";
 import { useToast } from "@/components/ui/use-toast";
 import {
   FileText,
   Search,
   Eye,
   Pencil,
-  Trash2,
   Clock,
   CheckCircle2,
   Wrench,
@@ -51,6 +41,21 @@ import { exportToCSV, exportToPDF } from "@/lib/exportUtils";
 import EditClaimDialog from "@/components/claims/EditClaimDialog";
 import ExportButton from "@/components/ExportButton";
 
+/** Only stage owned by claim_adjuster in WORKFLOW_STAGES */
+const ADJUSTER_STAGES = ["Survey & Damage Assessment Request"];
+
+const CLOSED_STATUSES = new Set([
+  "Rejected",
+  "Claim_Closed",
+  "Closed",
+  "Completed",
+  "Approved",
+]);
+
+function isClosed(c) {
+  return CLOSED_STATUSES.has(c.status) || !!c.closure_date;
+}
+
 export default function ClaimAdjusterDashboard() {
   const { user } = useOutletContext();
   const { toast } = useToast();
@@ -59,12 +64,12 @@ export default function ClaimAdjusterDashboard() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [editClaim, setEditClaim] = useState(null);
-  const [deleteClaim, setDeleteClaim] = useState(null);
-  const [deleting, setDeleting] = useState(false);
 
   const fetchClaims = async () => {
     const res = await api.get("/claims?workflow_type=Claim_Division");
-    return res.data.data || [];
+    return (res.data.data || []).filter(
+      (c) => c.workflow_type !== "GIO_Approval" && !c.is_deleted,
+    );
   };
 
   useEffect(() => {
@@ -96,78 +101,84 @@ export default function ClaimAdjusterDashboard() {
     }
   };
 
-  // Assigned / owned / current stage for this Claim Division adjuster
-  const myClaims = claims.filter((c) => {
-    if (c.workflow_type === "GIO_Approval") return false;
+  // Only claims assigned to / owned by this adjuster (or on their stage)
+  const baseList = useMemo(() => {
+    return claims.filter((c) => {
+      if (c.workflow_type === "GIO_Approval") return false;
 
-    if (
-      c.assigned_performer_id === user?.id ||
-      c.current_owner_id === user?.id ||
-      c.submitted_by_id === user?.id
-    ) {
-      return true;
-    }
+      if (
+        c.assigned_performer_id === user?.id ||
+        c.current_owner_id === user?.id
+      ) {
+        return true;
+      }
 
-    const stage = (c.workflow_stage || "").toLowerCase();
-    return (
-      stage.includes("operational registration") ||
-      stage.includes("damage assessment request") ||
-      stage.includes("proforma collection") ||
-      stage.includes("work order preparation") ||
-      stage.includes("salvage") ||
-      stage.includes("payment preparation")
-    );
-  });
+      const stage = c.workflow_stage || "";
+      if (ADJUSTER_STAGES.includes(stage)) {
+        return !c.assigned_performer_id || c.assigned_performer_id === user?.id;
+      }
 
-  // Prefer assigned-to-me; if empty show all Claim Division claims for admin-like visibility
-  const baseList =
-    myClaims.length > 0
-      ? myClaims
-      : claims.filter((c) => c.workflow_type !== "GIO_Approval");
+      return false;
+    });
+  }, [claims, user?.id]);
 
-  const filtered = baseList.filter((c) => {
-    const matchSearch =
-      !search ||
-      c.claim_reference?.toLowerCase().includes(search.toLowerCase()) ||
-      c.claimant_name?.toLowerCase().includes(search.toLowerCase()) ||
-      c.plate_number?.toLowerCase().includes(search.toLowerCase());
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return baseList.filter((c) => {
+      const matchSearch =
+        !q ||
+        c.claim_reference?.toLowerCase().includes(q) ||
+        c.claimant_name?.toLowerCase().includes(q) ||
+        c.plate_number?.toLowerCase().includes(q) ||
+        c.claim_number?.toLowerCase().includes(q);
 
-    const matchStatus =
-      statusFilter === "all" ||
-      c.status === statusFilter ||
-      c.workflow_stage === statusFilter;
+      const matchStatus =
+        statusFilter === "all" ||
+        c.status === statusFilter ||
+        c.workflow_stage === statusFilter;
 
-    return matchSearch && matchStatus;
-  });
+      return matchSearch && matchStatus;
+    });
+  }, [baseList, search, statusFilter]);
 
-  const pendingAction = baseList.filter(
-    (c) =>
-      (c.current_owner_id === user?.id ||
-        c.assigned_performer_id === user?.id) &&
-      !["Approved", "Rejected", "Claim_Closed"].includes(c.status),
+  const pendingAction = useMemo(
+    () =>
+      baseList.filter(
+        (c) =>
+          !isClosed(c) &&
+          (c.current_owner_id === user?.id ||
+            c.assigned_performer_id === user?.id) &&
+          ADJUSTER_STAGES.includes(c.workflow_stage || ""),
+      ),
+    [baseList, user?.id],
   );
 
-  const confirmDelete = async () => {
-    if (!deleteClaim) return;
-    setDeleting(true);
-    try {
-      await api.delete(`/claims/${deleteClaim.id}`);
-      toast({
-        title: "Claim deleted",
-        description: `${deleteClaim.claim_reference} has been removed.`,
-      });
-      setDeleteClaim(null);
-      loadData();
-    } catch (err) {
-      toast({
-        title: "Error",
-        description: err.response?.data?.message || "Failed to delete.",
-        variant: "destructive",
-      });
-    } finally {
-      setDeleting(false);
-    }
-  };
+  const inProgressCount = useMemo(
+    () =>
+      baseList.filter(
+        (c) =>
+          !isClosed(c) &&
+          [
+            "Assigned_to_Claim_Adjuster",
+            "Survey_in_Progress",
+            "Claim_Registered",
+            "Pending_Assignment",
+          ].includes(c.status),
+      ).length,
+    [baseList],
+  );
+
+  const needRegistrationCount = useMemo(
+    () =>
+      baseList.filter(
+        (c) =>
+          !isClosed(c) &&
+          c.registration_complete !== true &&
+          (c.assigned_performer_id === user?.id ||
+            c.current_owner_id === user?.id),
+      ).length,
+    [baseList, user?.id],
+  );
 
   const exportClaims = (format) => {
     const headers = [
@@ -244,21 +255,13 @@ export default function ClaimAdjusterDashboard() {
           },
           {
             label: "In Progress",
-            value: baseList.filter((c) =>
-              [
-                "Underwriting_Verification",
-                "Survey_Requested",
-                "Survey_in_Progress",
-                "Repair_in_Progress",
-                "Payment_Preparation",
-              ].includes(c.status),
-            ).length,
+            value: inProgressCount,
             icon: CheckCircle2,
             color: "text-emerald-600 bg-emerald-50",
           },
           {
-            label: "Total Claim Division Claims",
-            value: claims.length,
+            label: "Need full registration",
+            value: needRegistrationCount,
             icon: FileText,
             color: "text-slate-600 bg-slate-100",
           },
@@ -306,6 +309,12 @@ export default function ClaimAdjusterDashboard() {
                       <p className="text-xs text-muted-foreground">
                         {claim.claimant_name} · {claim.insurance_type} ·{" "}
                         {claim.workflow_stage}
+                        {claim.registration_complete !== true && (
+                          <span className="text-amber-600">
+                            {" "}
+                            · Complete registration required
+                          </span>
+                        )}
                       </p>
                     </div>
                   </div>
@@ -327,13 +336,12 @@ export default function ClaimAdjusterDashboard() {
         </Card>
       )}
 
-      {/* Filters — Claim Division statuses only */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="relative flex-1 min-w-[200px] max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <Input
             className="pl-9"
-            placeholder="Search ref, claimant, plate..."
+            placeholder="Search ref, claim no., claimant, plate..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -363,7 +371,9 @@ export default function ClaimAdjusterDashboard() {
         <Card className="border-0 shadow-sm">
           <CardContent className="flex flex-col items-center justify-center py-16">
             <FileText className="w-12 h-12 text-muted-foreground/30 mb-3" />
-            <p className="text-sm text-muted-foreground">No claims found</p>
+            <p className="text-sm text-muted-foreground">
+              No claims assigned to you yet
+            </p>
           </CardContent>
         </Card>
       ) : (
@@ -457,15 +467,6 @@ export default function ClaimAdjusterDashboard() {
                         >
                           <Pencil className="w-4 h-4" />
                         </Button>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8 text-red-600 hover:text-red-700"
-                          title="Delete"
-                          onClick={() => setDeleteClaim(claim)}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -482,31 +483,6 @@ export default function ClaimAdjusterDashboard() {
         onOpenChange={(v) => !v && setEditClaim(null)}
         onSaved={loadData}
       />
-
-      <AlertDialog
-        open={!!deleteClaim}
-        onOpenChange={(v) => !v && setDeleteClaim(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Claim?</AlertDialogTitle>
-            <p className="text-sm text-muted-foreground">
-              Delete <strong>{deleteClaim?.claim_reference}</strong>? This
-              cannot be undone.
-            </p>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={confirmDelete}
-              disabled={deleting}
-              className="bg-red-600 hover:bg-red-700"
-            >
-              {deleting ? "Deleting..." : "Delete"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

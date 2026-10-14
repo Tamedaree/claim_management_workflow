@@ -780,6 +780,30 @@ export const CLAIM_FOR_APPROVAL_TIER_STAGES = [
   "CEO Decision",
 ];
 
+export const ROLE_TO_CURRENT_APPROVER = {
+  principal_claim_officer: "Principal_of_Claim",
+  claim_manager: "Claim_Manager",
+  gio_claim_manager: "GIO_Claim_Manager",
+  director: "Director",
+  senior_director: "Senior_Director",
+  chief_of_gio: "Chief_of_GIO",
+  ceo: "CEO",
+  // roles that are not approvers on the claim
+  secretary: "None",
+  claim_adjuster: "None",
+  surveyor: "None",
+  gio_principal_claim_officer: "None",
+  admin: "None",
+};
+
+export function toCurrentApproverRole(roleKey) {
+  if (!roleKey || roleKey === "None") return "None";
+  // already a valid enum value?
+  const allowed = new Set(Object.values(ROLE_TO_CURRENT_APPROVER));
+  if (allowed.has(roleKey)) return roleKey;
+  return ROLE_TO_CURRENT_APPROVER[roleKey] || "None";
+}
+
 export const GIO_WORKFLOW_STAGES = [
   {
     stage_name: "GIO Case Registration",
@@ -883,9 +907,10 @@ export function currentRoleForActivity(stage, activity) {
 
 export function isLastInChain(stageName, role) {
   const chain = getEscalationChain(stageName);
-  if (!chain) return true;
+  if (!chain?.length) return true;
   const idx = chain.indexOf(role);
-  return idx === -1 || idx === chain.length - 1;
+  if (idx === -1) return false;
+  return idx === chain.length - 1;
 }
 
 export function nextRoleInChain(stageName, role) {

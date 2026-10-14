@@ -46,9 +46,8 @@ import {
   getEscalationChain,
   isEscalationStage,
   currentRoleForActivity,
-  isLastInChain,
-  nextRoleInChain,
   canActOnClaimDivisionStage,
+  toCurrentApproverRole,
 } from "@/lib/roleConfig";
 import { findApproversByRoleAndLocation } from "@/lib/userMatching";
 import { statusForCompletedStage } from "@/lib/statusMapping";
@@ -119,7 +118,7 @@ const isGarageSelectionStage = (name = "") => {
 };
 
 const stageInfoLabel = (name = "") => {
-  const n = name.toLowerCase();
+  const n = (name || "").toLowerCase();
   if (n.includes("survey") || n.includes("damage assessment"))
     return "See survey info";
   if (n.includes("bid") || n.includes("tender")) return "See bid info";
@@ -128,7 +127,7 @@ const stageInfoLabel = (name = "") => {
     return "See payment info";
   if (n.includes("closure") || n.includes("closed"))
     return "See claim link info";
-  return "See stage info";
+  return null; // no generic "See stage info"
 };
 
 const toPrismaStatus = (s) => {
@@ -268,6 +267,51 @@ function buildRegistrationPrefill(claim, activity) {
   };
 }
 
+const AMOUNT_SYNC_KEYS = [
+  "final_payment_amount",
+  "work_order_amount",
+  "authorized_amount",
+  "final_approval_amount",
+  "claim_amount",
+  "approved_amount",
+];
+
+function pickClaimAmountFromStageData(data = {}) {
+  // 1) Direct amount fields
+  for (const key of AMOUNT_SYNC_KEYS) {
+    const v = data[key];
+    if (v !== undefined && v !== null && v !== "" && !Number.isNaN(Number(v))) {
+      return Number(v);
+    }
+  }
+
+  // 2) Bid / Tender Process — amounts live on participants
+  const participants = Array.isArray(data.bid_participants)
+    ? data.bid_participants
+    : [];
+  if (participants.length > 0) {
+    // Prefer explicitly selected row
+    const selected = participants.find(
+      (p) =>
+        p.is_selected === true ||
+        p.is_selected === "Yes" ||
+        p.selected === true,
+    );
+    if (selected) {
+      const n = Number(selected.bid_amount);
+      if (!Number.isNaN(n) && n > 0) return n;
+    }
+
+    // Else lowest positive bid (common for repair estimates)
+    const bids = participants
+      .map((p) => Number(p.bid_amount))
+      .filter((n) => !Number.isNaN(n) && n > 0);
+    if (bids.length) return Math.min(...bids);
+  }
+
+  return null;
+}
+
 export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const { toast } = useToast();
   const [stages, setStages] = useState([]);
@@ -292,6 +336,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const [returnTargetOrder, setReturnTargetOrder] = useState("");
   const [returnComments, setReturnComments] = useState("");
   const [returnProcessing, setReturnProcessing] = useState(false);
+  const [editInfoModal, setEditInfoModal] = useState(null); // { stage, activity }
+  const [editStageData, setEditStageData] = useState({});
+  const [editSaving, setEditSaving] = useState(false);
 
   const isTerminal =
     claim?.status === "Rejected" ||
@@ -632,6 +679,127 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     setReturnModalOpen(true);
   };
 
+  const openEditStageInfo = (stage, activity) => {
+    if (isTerminal) {
+      toast({
+        title: "Claim closed",
+        description:
+          "Stage data cannot be edited on a closed or rejected claim.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setEditInfoModal({ stage, activity });
+    setEditStageData({ ...(activity?.registration_data || {}) });
+  };
+
+  const handleSaveStageEdit = async () => {
+    if (!editInfoModal?.stage) return;
+    setEditSaving(true);
+    try {
+      const { stage, activity } = editInfoModal;
+      const payload = { ...editStageData };
+
+      if (activity?.id) {
+        await api.put(`/claim-activities/${activity.id}`, {
+          registration_data: payload,
+        });
+      } else {
+        await api.post("/claim-activities", {
+          claim_id: claim.id,
+          claim_reference: claim.claim_reference,
+          stage_name: stage.stage_name,
+          stage_order: stage.stage_order,
+          status: activity?.status || "Completed",
+          department: stage.department,
+          registration_data: payload,
+        });
+      }
+
+      const claimPatch = {};
+
+      // Prefer explicit amount keys from stage form
+      const amount = pickClaimAmountFromStageData(payload);
+      if (amount != null) {
+        claimPatch.claim_amount = amount;
+        // Keep GIO final approval in sync when that field is edited
+        if (
+          payload.final_approval_amount !== undefined &&
+          payload.final_approval_amount !== null &&
+          payload.final_approval_amount !== ""
+        ) {
+          claimPatch.final_approval_amount = Number(
+            payload.final_approval_amount,
+          );
+        }
+      }
+
+      // Also: any currency-type field from STAGE_FIELD_CONFIG for this stage
+      const stageFields = STAGE_FIELD_CONFIG[stage.stage_name] || [];
+      for (const f of stageFields) {
+        if (f.type !== "currency") continue;
+        const v = payload[f.key];
+        if (
+          v !== undefined &&
+          v !== null &&
+          v !== "" &&
+          !Number.isNaN(Number(v))
+        ) {
+          claimPatch.claim_amount = Number(v);
+          if (f.key === "final_approval_amount") {
+            claimPatch.final_approval_amount = Number(v);
+          }
+          break;
+        }
+      }
+
+      if (
+        stage.stage_name === "Closure" ||
+        stage.stage_name === "Approval Case Closure"
+      ) {
+        const toBool = (v) => v === "Yes" || v === true;
+        if (payload.is_recovery !== undefined)
+          claimPatch.is_recovery = toBool(payload.is_recovery);
+        if (payload.is_subrogation !== undefined)
+          claimPatch.is_subrogation = toBool(payload.is_subrogation);
+        if (payload.is_reinsurance !== undefined)
+          claimPatch.is_reinsurance = toBool(payload.is_reinsurance);
+      }
+
+      if (Object.keys(claimPatch).length) {
+        await api.put(`/claims/${claim.id}`, claimPatch);
+      } else {
+        // Optional: surface that nothing mapped to claim amount
+        console.warn(
+          "Stage edit saved registration_data only; no amount key found in",
+          Object.keys(payload),
+        );
+      }
+
+      toast({
+        title: "Stage data updated",
+        description:
+          claimPatch.claim_amount != null
+            ? `Claim amount set to ${Number(claimPatch.claim_amount).toLocaleString()} ETB.`
+            : `"${getStageLabel(stage.stage_name)}" saved (no amount field to sync).`,
+      });
+
+      setEditInfoModal(null);
+      setEditStageData({});
+      await loadData();
+      // Parent must refresh claim row (ClaimDetail.refreshClaim)
+      await onActivityUpdated?.();
+    } catch (e) {
+      toast({
+        title: "Error",
+        description: e.response?.data?.message || "Failed to save stage data",
+        variant: "destructive",
+      });
+    } finally {
+      setEditSaving(false);
+    }
+  };
+
   const earlierStagesFor = (stage) =>
     stages
       .filter((s) => s.stage_order < stage.stage_order)
@@ -753,12 +921,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         status: "Returned_for_Correction",
         current_owner_id: nextOwnerId,
         current_owner_name: nextOwnerName,
-        current_approver_role:
-          targetRole === "claim_manager"
-            ? "Claim_Manager"
-            : targetRole === "principal_claim_officer"
-              ? "Principal_of_Claim"
-              : "None",
+        current_approver_role: toCurrentApproverRole(targetRole),
       });
 
       await api.post("/claim-actions", {
@@ -818,18 +981,62 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     actionModal?.stage &&
     isPrincipalAssignStageName(actionModal.stage.stage_name);
 
-  const modalCurrentRole = actionModal?.stage
-    ? currentRoleForActivity(actionModal.stage, actionModal.activity)
+  /** Match API/DB stage names to ESCALATION_CHAINS keys */
+  const resolveEscalationStageName = (name) => {
+    if (!name) return null;
+    if (isEscalationStage(name)) return name;
+    const n = String(name).trim().toLowerCase();
+    const keys = [
+      "Decision",
+      "Work Order / Payment Authorization",
+      "Discharge & Payment Approval",
+      "Closure",
+      "Approval Review",
+    ];
+    return (
+      keys.find((k) => k.toLowerCase() === n) ||
+      keys.find(
+        (k) => n.includes(k.toLowerCase()) || k.toLowerCase().includes(n),
+      ) ||
+      null
+    );
+  };
+
+  const escalationKey = actionModal?.stage
+    ? resolveEscalationStageName(actionModal.stage.stage_name)
     : null;
-  const showTierChoice =
-    actionModal?.newStatus === "Completed" &&
-    actionModal?.stage &&
-    isEscalationStage(actionModal.stage.stage_name) &&
-    !isLastInChain(actionModal.stage.stage_name, modalCurrentRole);
+
+  const chainForModal = escalationKey
+    ? getEscalationChain(escalationKey)
+    : null;
+
+  // Who is acting on this escalation step
+  const modalCurrentRole = (() => {
+    if (!actionModal?.stage) return null;
+    if (!chainForModal?.length) {
+      return (
+        currentRoleForActivity(actionModal.stage, actionModal.activity) ||
+        actionModal.stage.responsible_role
+      );
+    }
+    const fromAct = actionModal.activity?.responsible_role;
+    if (fromAct && chainForModal.includes(fromAct)) return fromAct;
+    if (user?.role && chainForModal.includes(user.role)) return user.role;
+    return chainForModal[0];
+  })();
+
   const nextRole =
-    actionModal?.stage && modalCurrentRole
-      ? nextRoleInChain(actionModal.stage.stage_name, modalCurrentRole)
+    chainForModal && modalCurrentRole
+      ? (() => {
+          const idx = chainForModal.indexOf(modalCurrentRole);
+          if (idx === -1 || idx >= chainForModal.length - 1) return null;
+          return chainForModal[idx + 1];
+        })()
       : null;
+
+  // Show "Approve & Finalize" + "Forward to …" only when there is a next role
+  const showTierChoice =
+    actionModal?.newStatus === "Completed" && !!escalationKey && !!nextRole;
 
   const handleAction = async () => {
     if (!actionModal) return;
@@ -906,7 +1113,17 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         showTierChoice &&
         completionChoice === "forward"
       ) {
-        const next = nextRoleInChain(stage.stage_name, modalCurrentRole);
+        const next = nextRole;
+        if (!next) {
+          toast({
+            title: "Cannot forward",
+            description: "No next role in the escalation chain.",
+            variant: "destructive",
+          });
+          setProcessing(false);
+          return;
+        }
+
         const approvals = [
           ...(stageData?.approvals || []),
           {
@@ -919,12 +1136,25 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         ];
         const updatedRegData = { ...stageData, approvals };
 
+        let nextOwnerId = null;
+        let nextOwnerName = null;
+        try {
+          const recipients = await findApproversByRoleAndLocation(next, claim);
+          if (recipients[0]) {
+            nextOwnerId = recipients[0].id;
+            nextOwnerName =
+              recipients[0].full_name || recipients[0].email || null;
+          }
+        } catch {
+          /* ignore */
+        }
+
         if (existing) {
           await api.put(`/claim-activities/${existing.id}`, {
             status: "In_Progress",
             responsible_role: next,
-            responsible_user_id: null,
-            responsible_user_name: null,
+            responsible_user_id: nextOwnerId,
+            responsible_user_name: nextOwnerName,
             registration_data: updatedRegData,
             comments,
           });
@@ -936,6 +1166,8 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             stage_order: stage.stage_order,
             status: "In_Progress",
             responsible_role: next,
+            responsible_user_id: nextOwnerId,
+            responsible_user_name: nextOwnerName,
             department: stage.department,
             registration_data: updatedRegData,
             started_at: now,
@@ -953,7 +1185,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         });
 
         await api.put(`/claims/${claim.id}`, {
-          current_approver_role: ROLE_LABELS[next] || next,
+          current_approver_role: toCurrentApproverRole(next),
+          current_owner_id: nextOwnerId,
+          current_owner_name: nextOwnerName,
         });
 
         try {
@@ -1072,9 +1306,17 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         comments: comments || existing?.comments || "",
         responsible_user_id: user.id,
         responsible_user_name: actorName,
-        responsible_role: isEscalationStage(stage.stage_name)
-          ? modalCurrentRole
-          : user.role,
+        responsible_role: (() => {
+          const key = resolveEscalationStageName(stage.stage_name);
+          const chain = key ? getEscalationChain(key) : null;
+          if (chain?.length) {
+            if (prismaStatus === "In_Progress" && !existing?.responsible_role) {
+              return chain[0];
+            }
+            return modalCurrentRole || chain[0];
+          }
+          return user.role;
+        })(),
         department: stage.department,
         registration_data: registrationData,
         started_at:
@@ -1233,12 +1475,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
               nextStage.department || claim.current_department,
             current_owner_id: nextOwnerId,
             current_owner_name: nextOwnerName,
-            current_approver_role:
-              nextRole === "claim_manager"
-                ? "Claim_Manager"
-                : nextRole === "principal_claim_officer"
-                  ? "Principal_of_Claim"
-                  : "None",
+            current_approver_role: toCurrentApproverRole(nextRole),
             ...(!claimHasFinalStatus && { status: mappedStatus }),
             ...(claimAmountFromBids != null && {
               claim_amount: claimAmountFromBids,
@@ -1645,19 +1882,35 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                       ].includes(stage.stage_name) &&
                         activity?.registration_data &&
                         Object.keys(activity.registration_data).length > 0 && (
-                          <button
-                            type="button"
-                            className="mt-2 text-xs text-primary font-medium hover:underline inline-flex items-center gap-1"
-                            onClick={() =>
-                              setInfoModal({
-                                stageName: stage.stage_name,
-                                data: activity.registration_data,
-                              })
-                            }
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            {stageInfoLabel(stage.stage_name)}
-                          </button>
+                          <div className="mt-2 flex flex-wrap items-center gap-3">
+                            {stageInfoLabel(stage.stage_name) && (
+                              <button
+                                type="button"
+                                className="text-xs text-primary font-medium hover:underline inline-flex items-center gap-1"
+                                onClick={() =>
+                                  setInfoModal({
+                                    stageName: stage.stage_name,
+                                    data: activity.registration_data,
+                                  })
+                                }
+                              >
+                                <FileText className="w-3.5 h-3.5" />
+                                {stageInfoLabel(stage.stage_name)}
+                              </button>
+                            )}
+
+                            {!isTerminal && (
+                              <button
+                                type="button"
+                                className="text-xs text-amber-700 font-medium hover:underline"
+                                onClick={() =>
+                                  openEditStageInfo(stage, activity)
+                                }
+                              >
+                                Edit stage data
+                              </button>
+                            )}
+                          </div>
                         )}
                       {escalation && (
                         <StageApprovalHistory
@@ -2011,6 +2264,55 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
           <DialogFooter>
             <Button variant="outline" onClick={() => setInfoModal(null)}>
               Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={!!editInfoModal}
+        onOpenChange={(open) => {
+          if (!open) {
+            setEditInfoModal(null);
+            setEditStageData({});
+          }
+        }}
+      >
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              Edit —{" "}
+              {editInfoModal
+                ? getStageLabel(editInfoModal.stage.stage_name)
+                : "Stage"}
+            </DialogTitle>
+          </DialogHeader>
+
+          <p className="text-sm text-muted-foreground">
+            Claim <strong>{claim.claim_reference}</strong>. Saving updates this
+            stage; payment / work-order amounts also update claim amount on
+            details.
+          </p>
+
+          {editInfoModal?.stage && (
+            <StageRegistrationForm
+              stageName={editInfoModal.stage.stage_name}
+              value={editStageData}
+              onChange={setEditStageData}
+            />
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditInfoModal(null);
+                setEditStageData({});
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleSaveStageEdit} disabled={editSaving}>
+              {editSaving ? "Saving..." : "Save stage data"}
             </Button>
           </DialogFooter>
         </DialogContent>

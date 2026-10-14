@@ -173,6 +173,28 @@ export default function ClaimDetail() {
     }
   };
 
+  const refreshClaim = async () => {
+    if (!id) return;
+    try {
+      const claimRes = await api.get(`/claims/${id}`);
+      const claimData = claimRes.data?.data ?? claimRes.data;
+      if (claimData?.id) setClaim(claimData);
+
+      try {
+        const actRes = await api.get(`/claim-activities/claim/${id}`);
+        setActivities(actRes.data?.data || []);
+      } catch {
+        /* keep existing activities */
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err.response?.data?.message || "Could not refresh claim",
+        variant: "destructive",
+      });
+    }
+  };
+
   useEffect(() => {
     if (!id) return;
 
@@ -606,7 +628,12 @@ export default function ClaimDetail() {
           </p>
         </div>
         <p className="text-xl font-bold text-primary">
-          {formatCurrency(claim.claim_amount)}
+          {formatCurrency(
+            claim.workflow_type === "GIO_Approval" &&
+              claim.final_approval_amount != null
+              ? claim.final_approval_amount
+              : claim.claim_amount,
+          )}
         </p>
       </div>
 
@@ -1090,13 +1117,13 @@ export default function ClaimDetail() {
         <GioCaseTimeline
           claim={claim}
           user={user}
-          onActivityUpdated={loadData}
+          onActivityUpdated={refreshClaim}
         />
       ) : (
         <WorkflowTimeline
           claim={claim}
           user={user}
-          onActivityUpdated={loadData}
+          onActivityUpdated={refreshClaim}
         />
       )}
 

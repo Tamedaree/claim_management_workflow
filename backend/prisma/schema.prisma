@@ -324,7 +324,7 @@ model Claim {
   cover_type                 String?
   plate_number               String?
   claim_amount               Float
-  incident_date              DateTime
+  incident_date              DateTime?
   incident_description       String?
   originating_office         String?
   originating_office_type    OriginatingOfficeType?
