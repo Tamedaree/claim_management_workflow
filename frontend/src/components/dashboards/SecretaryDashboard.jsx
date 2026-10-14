@@ -114,7 +114,9 @@ export default function SecretaryDashboard() {
     );
   }
 
-  const gioCases = claimsVisible.filter((c) => c.workflow_type === "GIO_Approval");
+  const gioCases = claimsVisible.filter(
+    (c) => c.workflow_type === "GIO_Approval",
+  );
   const myGioCases = gioCases.filter((c) => c.submitted_by_id === user?.id);
 
   const pendingRegistration = claimsVisible.filter(
@@ -165,11 +167,20 @@ export default function SecretaryDashboard() {
       return [
         i + 1,
         c.claim_reference,
-        isGio ? "GIO Case" : "Claim Division",
+        isGio
+          ? "GIO Case"
+          : c.registration_type === "Claim_for_Approval" ||
+              String(c.registration_type || "").includes("Approval")
+            ? "Claim for Approval"
+            : "Claim Division",
         c.claimant_name,
         c.insurance_type,
         c.plate_number || "",
-        isGio ? gioReasonLabel(c.gio_case_reason) : "",
+        gioReasonLabel(
+          c.gio_case_reason ||
+            c.registration_data?.approval_case_reason ||
+            c.registration_data?.gio_case_reason,
+        ),
         c.claim_amount || 0,
         c.workflow_stage || "",
         String(c.status || "").replace(/_/g, " "),
@@ -343,8 +354,19 @@ export default function SecretaryDashboard() {
                             </span>
                           ) : null}
                         </TableCell>
-                        <TableCell className="text-xs max-w-[140px] truncate">
-                          {isGio ? gioReasonLabel(c.gio_case_reason) : "—"}
+                        <TableCell
+                          className="text-xs max-w-[140px] truncate"
+                          title={gioReasonLabel(
+                            c.gio_case_reason ||
+                              c.registration_data?.approval_case_reason ||
+                              c.registration_data?.gio_case_reason,
+                          )}
+                        >
+                          {gioReasonLabel(
+                            c.gio_case_reason ||
+                              c.registration_data?.approval_case_reason ||
+                              c.registration_data?.gio_case_reason,
+                          )}
                         </TableCell>
                         <TableCell className="text-sm font-medium whitespace-nowrap">
                           {formatCurrency(c.claim_amount || 0)}

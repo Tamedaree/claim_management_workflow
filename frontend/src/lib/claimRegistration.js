@@ -535,6 +535,7 @@ export async function registerApprovalCase(
     priority: form.priority || "Medium",
     registration_type: "Claim_for_Approval",
     workflow_type: "Claim_Division",
+    gio_case_reason: form.gio_case_reason || form.approval_case_reason || null,
     is_recovery: !!form.is_recovery,
     is_subrogation: !!form.is_subrogation,
     is_reinsurance: !!form.is_reinsurance,
