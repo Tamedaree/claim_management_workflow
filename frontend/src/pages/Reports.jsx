@@ -45,8 +45,6 @@ import {
   MapPin,
   Layers,
   Link2,
-  ShieldCheck,
-  Inbox,
 } from "lucide-react";
 import moment from "moment";
 import { jsPDF } from "jspdf";
@@ -56,7 +54,6 @@ import { saveAs } from "file-saver";
 import {
   ROLE_LABELS,
   STATUS_COLORS,
-  ROLE_HIERARCHY,
   getWorkflowScopeForRole,
 } from "@/lib/roleConfig";
 import {
@@ -85,8 +82,11 @@ const REPORT_TYPES = [
   { value: "decision", label: "Decision Outcome", icon: CheckCircle2 },
   { value: "payment", label: "Payment / Disbursement", icon: FileDown },
   { value: "recovery", label: "Subrogation / Recovery-Linked", icon: Link2 },
-  { value: "doa", label: "Approval / DoA Compliance", icon: ShieldCheck },
-  { value: "pending", label: "Pending Claims", icon: Inbox },
+  {
+    value: "damage_assessment",
+    label: "Damage Assessment Report",
+    icon: Activity, // or Gauge / Wrench if you prefer
+  },
 ];
 
 function getClaimDate(c) {
@@ -167,9 +167,13 @@ function sourceBucket(c) {
 function trendKey(date, granularity) {
   const m = moment(date);
   if (granularity === "daily") return m.format("DD MMM");
-  if (granularity === "weekly") return `W${m.isoWeek()} ${m.format("YY")}`;
+  if (granularity === "weekly") {
+    const start = m.clone().startOf("isoWeek");
+    const end = m.clone().endOf("isoWeek");
+    return `${start.format("DD")}-${end.format("DD MMM YY")}`;
+  }
   if (granularity === "yearly") return m.format("YYYY");
-  return m.format("MMM YY");
+  return m.format("MMM YYYY");
 }
 
 function displayPerson(value, nameByEmail = {}) {
@@ -179,13 +183,86 @@ function displayPerson(value, nameByEmail = {}) {
   return nameByEmail[s.toLowerCase()] || null;
 }
 
+const SURVEY_STAGE_NAME = "Survey & Damage Assessment Request";
+
+function hasDamageAssessmentRequest(rd = {}) {
+  // Non-drivable RTC date, or internal survey requested
+  if (rd.damage_assessment_request_date) return true;
+  if (
+    rd.internal_survey_request === "Yes" ||
+    rd.internal_survey_request === true
+  )
+    return true;
+  return false;
+}
+
+function buildDamageAssessmentRows(claims, activities) {
+  const byClaim = {};
+  for (const a of activities) {
+    if (a.stage_name !== SURVEY_STAGE_NAME) continue;
+    const prev = byClaim[a.claim_id];
+    // Prefer completed / latest activity for that stage
+    if (
+      !prev ||
+      (a.status === "Completed" && prev.status !== "Completed") ||
+      (a.updatedAt && prev.updatedAt && a.updatedAt > prev.updatedAt)
+    ) {
+      byClaim[a.claim_id] = a;
+    }
+  }
+
+  const rows = [];
+  for (const c of claims) {
+    const act = byClaim[c.id];
+    if (!act) continue; // only claims that reached survey stage
+
+    const rd = act.registration_data || {};
+    const requested = hasDamageAssessmentRequest(rd);
+    const independent =
+      rd.independent_loss_assessor ??
+      rd.independent_loss_assessor_non_drivable ??
+      "";
+
+    rows.push({
+      id: c.id,
+      claim_reference: c.claim_reference || "—",
+      claim_number: c.claim_number || "—",
+      plate_number: c.plate_number || rd.plate_number || "—",
+      insured: c.claimant_name || rd.insured_name || "—",
+      insurance_type: c.insurance_type || "—",
+      originating_office_type: c.originating_office_type
+        ? String(c.originating_office_type).replace(/_/g, " ")
+        : "—",
+      originating_office: c.originating_office || "—",
+      towed_to_rtc_date: rd.towed_to_rtc_date || "—",
+      vehicle_condition: rd.vehicle_condition
+        ? String(rd.vehicle_condition).replace(/_/g, " ")
+        : "—",
+      internal_survey_request: rd.internal_survey_request || "—",
+      internal_survey_date: rd.internal_survey_date || "—",
+      damage_assessment_request_date: rd.damage_assessment_request_date || "—",
+      independent_loss_assessor:
+        independent === true
+          ? "Yes"
+          : independent === false
+            ? "No"
+            : independent || "—",
+      assessment_requested: requested ? "Yes" : "No",
+      stage_status: act.status || "—",
+    });
+  }
+
+  return rows.sort((a, b) =>
+    String(a.claim_reference).localeCompare(String(b.claim_reference)),
+  );
+}
+
 export default function Reports() {
   const { user } = useOutletContext();
   const role = user?.role || "claim_adjuster";
   const scope = getWorkflowScopeForRole(role);
   const [claims, setClaims] = useState([]);
   const [activities, setActivities] = useState([]);
-  const [thresholds, setThresholds] = useState([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState("30d");
   const [trendGranularity, setTrendGranularity] = useState("monthly");
@@ -201,7 +278,7 @@ export default function Reports() {
     (async () => {
       setLoading(true);
       try {
-        const [claimsRes, activitiesRes, thresholdsRes] = await Promise.all([
+        const [claimsRes, activitiesRes] = await Promise.all([
           api.get("/claims"),
           api.get("/claim-activities").catch(() => ({ data: { data: [] } })),
           api.get("/approval-thresholds").catch(() => ({ data: { data: [] } })),
@@ -209,7 +286,6 @@ export default function Reports() {
         if (!cancelled) {
           setClaims(claimsRes.data?.data || []);
           setActivities(activitiesRes.data?.data || []);
-          setThresholds(thresholdsRes.data?.data || []);
         }
       } catch {
         if (!cancelled) setClaims([]);
@@ -538,42 +614,22 @@ export default function Reports() {
       }));
   }, [filtered, linkMeta.field]);
 
-  // ---- Approval / DoA Compliance ----
-  const doaRows = useMemo(() => {
-    return filtered
-      .filter(
-        (c) => c.current_approver_role && c.current_approver_role !== "None",
-      )
-      .map((c) => {
-        const match = thresholds.find(
-          (t) =>
-            (t.insurance_type === c.insurance_type ||
-              t.insurance_type === "All") &&
-            c.claim_amount >= t.min_amount &&
-            c.claim_amount <= t.max_amount,
-        );
-        if (!match) return null;
+  const damageAssessmentRows = useMemo(
+    () => buildDamageAssessmentRows(filtered, streamActivities),
+    [filtered, streamActivities],
+  );
 
-        const requiredRole = String(
-          match.required_approver_role || "",
-        ).toLowerCase();
-        const actualRole = String(c.current_approver_role || "").toLowerCase();
-        const requiredIdx = ROLE_HIERARCHY.indexOf(requiredRole);
-        const actualIdx = ROLE_HIERARCHY.indexOf(actualRole);
-        const compliant =
-          requiredIdx === -1 || actualIdx === -1 || actualIdx >= requiredIdx;
-
-        return {
-          claim_reference: c.claim_reference,
-          amount: c.claim_amount,
-          requiredRole: match.required_approver_role,
-          actualRole: c.current_approver_role,
-          compliant,
-        };
-      })
-      .filter(Boolean);
-  }, [filtered, thresholds]);
-  const doaViolations = doaRows.filter((r) => !r.compliant);
+  const damageAssessmentStats = useMemo(() => {
+    const total = damageAssessmentRows.length;
+    const requested = damageAssessmentRows.filter(
+      (r) => r.assessment_requested === "Yes",
+    ).length;
+    return {
+      total,
+      requested,
+      notRequested: total - requested,
+    };
+  }, [damageAssessmentRows]);
 
   const totalPages = Math.max(
     1,
@@ -680,21 +736,41 @@ export default function Reports() {
             r.status,
           ]),
         };
-      case "doa":
+      case "damage_assessment":
         return {
           headers: [
             "Claim Ref",
-            "Amount (ETB)",
-            "Required Role",
-            "Actual Role",
-            "Compliant",
+            "Claim Number",
+            "Plate No.",
+            "Insured",
+            "Class",
+            "Originating Office Type",
+            "Originating Office",
+            "Towed to RTC Date",
+            "Nature of Vehicle",
+            "Internal Survey Requested",
+            "Internal Survey Date",
+            "Damage Assessment Request Date (RTC)",
+            "Independent Loss Assessor / External Survey",
+            "Damage Assessment Requested",
+            "Stage Status",
           ],
-          rows: doaRows.map((r) => [
+          rows: damageAssessmentRows.map((r) => [
             r.claim_reference,
-            r.amount,
-            String(r.requiredRole).replace(/_/g, " "),
-            String(r.actualRole).replace(/_/g, " "),
-            r.compliant ? "Yes" : "NO — VIOLATION",
+            r.claim_number,
+            r.plate_number,
+            r.insured,
+            r.insurance_type,
+            r.originating_office_type,
+            r.originating_office,
+            r.towed_to_rtc_date,
+            r.vehicle_condition,
+            r.internal_survey_request,
+            r.internal_survey_date,
+            r.damage_assessment_request_date,
+            r.independent_loss_assessor,
+            r.assessment_requested,
+            String(r.stage_status).replace(/_/g, " "),
           ]),
         };
       case "gio_monitoring":
@@ -1904,76 +1980,132 @@ export default function Reports() {
             </Card>
           )}
 
-          {reportType === "doa" && (
-            <Card className="border-0 shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm">
-                  Approval / DoA Compliance
-                </CardTitle>
-                <p className="text-xs text-muted-foreground">
-                  {doaViolations.length > 0 ? (
-                    <span className="text-red-600 font-medium">
-                      {doaViolations.length} claim(s) outside delegated
-                      authority
-                    </span>
-                  ) : (
-                    "All current approvals are within delegated authority"
-                  )}
-                </p>
-              </CardHeader>
-              <CardContent className="overflow-x-auto">
-                {doaRows.length === 0 ? (
-                  <p className="text-sm text-muted-foreground text-center py-8">
-                    No claims with an active approver to check
+          {reportType === "damage_assessment" && (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <Card className="border-0 shadow-sm rounded-2xl">
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">
+                      Claims with survey stage
+                    </p>
+                    <p className="text-2xl font-bold tracking-tight">
+                      {damageAssessmentStats.total}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="border-0 shadow-sm rounded-2xl">
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">
+                      Damage assessment requested
+                    </p>
+                    <p className="text-2xl font-bold tracking-tight text-amber-700">
+                      {damageAssessmentStats.requested}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="border-0 shadow-sm rounded-2xl">
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">
+                      Damage assessment not requested
+                    </p>
+                    <p className="text-2xl font-bold tracking-tight">
+                      {damageAssessmentStats.notRequested}
+                    </p>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card className="border-0 shadow-sm rounded-2xl">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-sm font-semibold">
+                    Damage Assessment Report
+                  </CardTitle>
+                  <p className="text-xs text-muted-foreground">
+                    Survey &amp; Damage Assessment Request stage — plate, claim
+                    number, office, vehicle nature, and assessment flags.
                   </p>
-                ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead className="text-xs">Claim Ref</TableHead>
-                        <TableHead className="text-xs">Amount (ETB)</TableHead>
-                        <TableHead className="text-xs">Required Role</TableHead>
-                        <TableHead className="text-xs">Actual Role</TableHead>
-                        <TableHead className="text-xs">Compliant</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {doaRows.map((r, i) => (
-                        <TableRow key={i}>
-                          <TableCell className="text-xs font-medium">
-                            {r.claim_reference}
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {r.amount?.toLocaleString()}
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {String(r.requiredRole).replace(/_/g, " ")}
-                          </TableCell>
-                          <TableCell className="text-xs">
-                            {String(r.actualRole).replace(/_/g, " ")}
-                          </TableCell>
-                          <TableCell>
-                            {r.compliant ? (
-                              <Badge className="bg-emerald-100 text-emerald-700 text-[10px]">
-                                Compliant
-                              </Badge>
-                            ) : (
-                              <Badge className="bg-red-100 text-red-700 text-[10px]">
-                                Violation
-                              </Badge>
-                            )}
-                          </TableCell>
+                </CardHeader>
+                <CardContent className="overflow-x-auto p-0">
+                  {damageAssessmentRows.length === 0 ? (
+                    <p className="text-sm text-muted-foreground text-center py-10 px-4">
+                      No survey / damage assessment data in this period.
+                      Complete the Survey &amp; Damage Assessment Request stage
+                      to populate this report.
+                    </p>
+                  ) : (
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/40">
+                          <TableHead className="text-xs">Claim Ref</TableHead>
+                          <TableHead className="text-xs">Claim No.</TableHead>
+                          <TableHead className="text-xs">Plate</TableHead>
+                          <TableHead className="text-xs">Insured</TableHead>
+                          <TableHead className="text-xs">Office type</TableHead>
+                          <TableHead className="text-xs">Nature</TableHead>
+                          <TableHead className="text-xs">
+                            Assessment requested
+                          </TableHead>
+                          <TableHead className="text-xs">
+                            Independent assessor
+                          </TableHead>
+                          <TableHead className="text-xs">
+                            RTC / Survey date
+                          </TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                )}
-              </CardContent>
-            </Card>
+                      </TableHeader>
+                      <TableBody>
+                        {damageAssessmentRows.map((r) => (
+                          <TableRow key={r.id} className="hover:bg-muted/30">
+                            <TableCell className="text-xs font-medium font-mono">
+                              {r.claim_reference}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.claim_number}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.plate_number}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.insured}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.originating_office_type}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.vehicle_condition}
+                            </TableCell>
+                            <TableCell>
+                              <Badge
+                                variant="secondary"
+                                className={`text-[10px] ${
+                                  r.assessment_requested === "Yes"
+                                    ? "bg-amber-100 text-amber-900"
+                                    : "bg-stone-100 text-stone-600"
+                                }`}
+                              >
+                                {r.assessment_requested}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {r.independent_loss_assessor}
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap">
+                              {r.damage_assessment_request_date !== "—"
+                                ? r.damage_assessment_request_date
+                                : r.internal_survey_date}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  )}
+                </CardContent>
+              </Card>
+            </>
           )}
 
           {/* Trend + Source stay visible for the overview-style reports */}
-          {["tracking", "pending"].includes(reportType) && (
+          {["tracking"].includes(reportType) && (
             <>
               <Card className="border-0 shadow-sm">
                 <CardHeader className="pb-2 flex flex-row items-center justify-between gap-2">

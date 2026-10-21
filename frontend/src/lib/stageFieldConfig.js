@@ -168,21 +168,50 @@ export const STAGE_FIELD_CONFIG = {
   "Approval Case Registration": APPROVAL_CASE_REGISTRATION_FIELDS,
 
   "Survey & Damage Assessment Request": [
-    { key: "towed_to_rtc_date", label: "Towed to RTC Date", type: "date" },
+    {
+      key: "towed_to_rtc_date",
+      label: "Towed to RTC Date",
+      type: "date",
+    },
+    {
+      key: "vehicle_condition",
+      label: "Nature of Vehicle",
+      type: "select",
+      options: ["Drivable", "Non_Drivable"],
+    },
+
+    // —— Drivable ——
     {
       key: "internal_survey_request",
       label: "Internal Survey Requested",
       type: "yesno",
+      showWhen: { key: "vehicle_condition", value: "Drivable" },
     },
     {
       key: "internal_survey_date",
       label: "Internal Survey Request Date",
       type: "date",
+      showWhen: { key: "internal_survey_request", value: "Yes" },
     },
+    {
+      key: "independent_loss_assessor",
+      label: "Independent Loss Assessor / External Survey",
+      type: "yesno",
+      showWhen: { key: "vehicle_condition", value: "Drivable" },
+    },
+
+    // —— Non-drivable ——
     {
       key: "damage_assessment_request_date",
       label: "Damage Assessment Request Date (RTC)",
       type: "date",
+      showWhen: { key: "vehicle_condition", value: "Non_Drivable" },
+    },
+    {
+      key: "independent_loss_assessor_non_drivable",
+      label: "Independent Loss Assessor / External Survey",
+      type: "yesno",
+      showWhen: { key: "vehicle_condition", value: "Non_Drivable" },
     },
   ],
 
