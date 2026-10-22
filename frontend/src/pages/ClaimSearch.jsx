@@ -35,7 +35,7 @@ import {
   getWorkflowScopeForRole,
 } from "@/lib/roleConfig";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 10;
 
 const PERIOD_OPTIONS = [
   { value: "30d", label: "Last 30 days" },
