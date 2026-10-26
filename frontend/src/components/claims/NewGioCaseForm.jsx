@@ -34,10 +34,8 @@ import {
   GIO_CASE_REASONS,
   INSURANCE_TYPES,
   GIO_ORIGINATING_OFFICE_TYPE_OPTIONS,
-  SERVICE_CENTERS,
-  DISTRICT_OFFICES,
-  KEFLA_AGER_BRANCHES,
   MOTOR_VEHICLE_TYPES,
+  officeListForType,
 } from "@/lib/roleConfig";
 import {
   registerGioCase,
@@ -47,22 +45,6 @@ import {
 import { useExistingClaimCheck } from "@/hooks/useExistingClaimCheck";
 import ExistingClaimAlert from "@/components/claims/ExistingClaimAlert";
 import api from "@/api/api";
-
-function officeListForType(type) {
-  const key = (type || "").replace(/\s+/g, "_");
-  switch (key) {
-    case "Service_Center":
-      return SERVICE_CENTERS || [];
-    case "District_Office":
-      return DISTRICT_OFFICES || [];
-    case "Kefla_Ager_Branch":
-      return KEFLA_AGER_BRANCHES || [];
-    case "Head_Office":
-      return ["Head Office"];
-    default:
-      return [];
-  }
-}
 
 function StepBadge({ n, color }) {
   return (

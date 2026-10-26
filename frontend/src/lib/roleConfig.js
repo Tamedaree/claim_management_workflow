@@ -205,62 +205,180 @@ export const WORK_LOCATION_TYPE_OPTIONS = [
   { value: "Head_Office", label: "Head Office" },
 ];
 
-export const BRANCH_OFFICES = [
-  "Addis Ababa Main Branch",
-  "Bole Branch",
-  "Merkato Branch",
-  "Arat Kilo Branch",
-  "Mekanisa Branch",
-  "Saris Branch",
-  "Lideta Branch",
-  "Nifas Silk Branch",
-  "Akaki Branch",
-  "Kolfe Branch",
-  "Bahir Dar Branch",
-  "Gondar Branch",
-  "Dessie Branch",
-  "Mekelle Branch",
-  "Adama Branch",
-  "Jimma Branch",
-  "Hawassa Branch",
-  "Dire Dawa Branch",
-  "Harar Branch",
-  "Jigjiga Branch",
-  "Assosa Branch",
-  "Gambela Branch",
-  "Semera Branch",
-  "Arbaminch Branch",
-  "Wolaita Sodo Branch",
-  "Hossana Branch",
-  "Debre Markos Branch",
-  "Debre Berhan Branch",
-  "Shashemene Branch",
-  "Nekemte Branch",
-  "Gore Branch",
-  "Bedelle Branch",
-  "Asela Branch",
-  "Adigrat Branch",
-  "Axum Branch",
-  "Shire Branch",
-  "Woldia Branch",
-  "Debre Tabor Branch",
-];
-
 export const DISTRICT_OFFICES = [
-  "Central Addis District",
-  "Northern Addis District",
-  "Western Addis District",
-  "Southern Addis District",
-  "Eastern Addis District",
-  "Mekelle District",
+  "North West District",
+  "South East District",
   "Adama District",
+  "Bahir Dar District",
+  "Dire Dawa District",
   "Hawassa District",
   "Nekemte District",
   "Jimma District",
-  "Dire Dawa District",
-  "Bahir Dar District",
-  "Arada District",
-];
+  "Mekelle District",
+  "Dessie District",
+].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+
+export const DISTRICT_BRANCHES_BY_DISTRICT = {
+  "North West District": [
+    "Arada A.A Area Branch",
+    "Beherawi Area Branch",
+    "Leghar Area Branch",
+    "Gulele A.A Area Branch",
+    "Sululta A.A Satellite office",
+    "Merkato Area Branch",
+    "Alemgena Area Branch",
+    "Ambo A.A Area Branch",
+    "Autobus Tera Area Branch",
+    "Bisrate gabriel Area Branch",
+    "Jemo Satellite Office",
+    "Bethel Area Branch",
+    "Burayu Area Branch",
+    "Holeta Satellite Office",
+    "Ashewa Meda Satellite office",
+    "Butajira Area Branch",
+    "Fiche Area Branch",
+    "Lideta Area Branch",
+    "Welkite Area Branch",
+    "Weliso Area satellite office",
+    "MelkaNono Branch",
+    "Gebere Guracha Satellite office",
+    "Addisu Gebeya Satellite office",
+    "Werabe satellite office",
+    "Gihon branch",
+    "LEGEHAR GRAND LIFE",
+    "Merkato life Branch",
+  ],
+  "South East District": [
+    "Meskel Adebabay Area Branch",
+    "Ras Area Branch",
+    "Stadium Area Branch",
+    "Bishoftu Area Branch",
+    "Bole Area Branch",
+    "Saris Area Branch",
+    "Nifasilk Area Satellite Office",
+    "Beklobet Area Branch",
+    "Debre Birhan Area Branch",
+    "Gofa Area Branch",
+    "Kality Area Branch",
+    "Megenagna Area Branch",
+    "Legtafo Area Branch",
+    "Yerer Area Branch",
+    "Shewarobit Area Branch",
+    "BOLE GRAND LIFE",
+    "Megenagna Life",
+  ],
+  "Adama District": [
+    "Adama Area Branch",
+    "Assela Area Branch",
+    "Robe Area Branch",
+    "Awash Area Sebat kilo Branch",
+    "Bekoji Area Satellite Office",
+    "Mojo Area Branch",
+    "Arerti Satellite Office",
+    "Meki Satellite Office",
+    "Ginir branch",
+    "Robe Arsi Satellite Office",
+    "Arsi robe satellite office",
+  ],
+  "Bahir Dar District": [
+    "Bahir Dar Area Branch 1",
+    "Gonder Area Branch",
+    "Debark Area Branch",
+    "Debremarkos Area Branch",
+    "Debretabor Area Branch",
+    "Enjibara Area Branch",
+    "Bahirdar Area Branch 3",
+    "Woreta Area Satellite Office",
+    "Genda Weha satellite office",
+    "Mota Branch",
+    "Bahiredar satellite office",
+    "Finoteselame satellite",
+    "Abay Mado sefer Satellite office",
+    "Gondar Life Branch",
+    "Tana Life Branch",
+  ],
+  "Dire Dawa District": [
+    "Dire Dawa Area Branch",
+    "Deredawa Area Satellite Office",
+    "Chiro Area Branch",
+    "Jigjiga Area Branch",
+    "Gode Satellite Office",
+    "Harrar Area Branch",
+    "Aweday Area Satellite Office",
+    "Gelemso Area Branch",
+  ],
+  "Hawassa District": [
+    "Hawassa Area Branch",
+    "Arbaminch Area Branch",
+    "Sikala Area Satellite Office",
+    "Batu Area Branch",
+    "Dilla Area Branch",
+    "Buie Hora Area Branch",
+    "Dodola Area Branch",
+    "Durame Area Branch",
+    "Hossana Branch",
+    "Alaba Area Branch",
+    "Jinka Area Branch",
+    "Shashemene Branch",
+    "Wolaita Sodo Area Branch",
+    "Worabe Area Satellite office",
+    "Adola Satellite Office",
+    "Sawila Branch",
+    "Yabelo Satellite Branch",
+    "Konso Satellite office",
+    "Aleta Wondo Satellite office",
+  ],
+  "Nekemte District": [
+    "Nekemte Area Branch",
+    "Gimbi Area Branch",
+    "Asosa Area Branch",
+    "Denbidollo Area Branch",
+    "Shambu Area Branch",
+    "Bako satellite office",
+    "Nejo Satellite Branch",
+    "Gida Yana Satellite",
+    "Dedessa Life Branch",
+  ],
+  "Jimma District": [
+    "Jimma Area Branch",
+    "Bedele Area Branch",
+    "Agaro Area Satellite Office",
+    "Bonga Area Branch",
+    "Gambella Area Branch",
+    "Metu Area Branch",
+    "Mizan Aman Area Branch",
+    "Tepi Satellite office",
+    "Gibe Life Branch",
+  ],
+  "Mekelle District": [
+    "Mekele Area Branch 1",
+    "Shire Endasilasie Area Branch",
+    "Adigrat Area Branch",
+    "Axum Area Branch",
+    "Humera Area Branch",
+    "Mekele Area Branch 3",
+    "Maichew satellite office",
+    "Mekelle satellite office",
+    "Abadi Satellite office",
+    "Wikro Satellite office",
+    "Tekeze Life Branch",
+  ],
+  "Dessie District": [
+    "Dessie Area Branch",
+    "Combolcha Area Branch",
+    "Semera Area Branch",
+    "Woldiya Branch",
+    "Kombolcha IP satellite office",
+    "Sekota Satellite Office",
+    "Kemise Satellite Office",
+    "Dessie Life Satellite Branch",
+    "Bati Life Branch",
+  ],
+};
+
+export const ALL_DISTRICT_BRANCHES = Object.values(
+  DISTRICT_BRANCHES_BY_DISTRICT,
+).flat();
 
 export const FORWARDING_OFFICE_TYPES = [
   "Service Center",
@@ -291,22 +409,15 @@ export const APPROVAL_ORIGINATING_OFFICE_TYPE_OPTIONS =
 export const CLAIM_DIVISION_ORIGINATING_OFFICE_TYPE_OPTIONS =
   ORIGINATING_OFFICE_TYPE_OPTIONS.filter((o) => o.value !== "Service_Center");
 
-export const KEFLA_AGER_BRANCHES = [
-  "Humera Branch",
-  "Gambella Branch",
-  "Jigjiga Branch",
-  "Asosa Branch",
-  "Semera Branch",
-  "Mizan Aman Branch",
-  "Chero Branch",
-  "Bonga Branch",
-  "Metu Branch",
-  "Gimbi Branch",
-  "Denbidollo Branch",
-  "Gelemso Branch",
-  "Harrar Branch",
-  "Moyale Branch",
-];
+const KEFLA_EXCLUDED_DISTRICTS = new Set([
+  "North West District",
+  "South East District",
+]);
+
+export const KEFLA_AGER_BRANCHES = Object.entries(DISTRICT_BRANCHES_BY_DISTRICT)
+  .filter(([district]) => !KEFLA_EXCLUDED_DISTRICTS.has(district))
+  .flatMap(([, branches]) => branches)
+  .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
 // Motor insurance cover types
 export const MOTOR_COVER_TYPES = [
@@ -1004,9 +1115,25 @@ export const SERVICE_CENTERS = [
 // Map forwarding office type to its list of offices
 export const FORWARDING_OFFICES = {
   "Service Center": SERVICE_CENTERS,
+  Service_Center: SERVICE_CENTERS,
+
+  // District type → district names only (not all branches)
   "District Office": DISTRICT_OFFICES,
+  District_Office: DISTRICT_OFFICES,
+
   "Kefla Ager Branch": KEFLA_AGER_BRANCHES,
+  Kefla_Ager_Branch: KEFLA_AGER_BRANCHES,
+
+  "Head Office": ["Head Office"],
+  Head_Office: ["Head Office"],
 };
+
+export function officeListForType(type) {
+  if (!type) return [];
+  if (FORWARDING_OFFICES[type]?.length) return FORWARDING_OFFICES[type];
+  const key = String(type).replace(/\s+/g, "_");
+  return FORWARDING_OFFICES[key] || [];
+}
 
 export const GIO_FORWARDING_OFFICE_TYPES = [
   "Service Center",

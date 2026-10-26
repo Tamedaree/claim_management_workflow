@@ -21,11 +21,11 @@ import {
 import { useToast } from "@/components/ui/use-toast";
 import {
   INSURANCE_TYPES,
-  FORWARDING_OFFICES,
   GIO_CASE_REASONS,
   toEnumKey,
   GIO_FORWARDING_OFFICE_TYPES,
   CLAIM_DIVISION_FORWARDING_OFFICE_TYPES,
+  officeListForType,
 } from "@/lib/roleConfig";
 
 /**
@@ -138,12 +138,7 @@ function EditClaimForm({ claim, onOpenChange, onSaved }) {
       ? GIO_FORWARDING_OFFICE_TYPES || []
       : CLAIM_DIVISION_FORWARDING_OFFICE_TYPES || [];
 
-  const officeList =
-    form.originating_office_type &&
-    FORWARDING_OFFICES?.[form.originating_office_type]
-      ? FORWARDING_OFFICES[form.originating_office_type]
-      : [];
-
+  const officeList = officeListForType(form.originating_office_type);
   const handleSave = async () => {
     if (
       !form.claim_reference ||

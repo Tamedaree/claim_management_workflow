@@ -21,7 +21,7 @@ import {
   Building2,
   ClipboardList,
 } from "lucide-react";
-import { INSURANCE_TYPES, FORWARDING_OFFICES } from "@/lib/roleConfig";
+import { INSURANCE_TYPES, officeListForType } from "@/lib/roleConfig";
 import {
   NEW_CLAIM_OFFICE_TYPES,
   fetchExistingClaimants,
@@ -140,10 +140,7 @@ export default function NewClaimNotificationForm({ user }) {
   };
 
   const officeOptions = useMemo(
-    () =>
-      form.originating_office_type
-        ? FORWARDING_OFFICES[form.originating_office_type] || []
-        : [],
+    () => officeListForType(form.originating_office_type),
     [form.originating_office_type],
   );
 

@@ -34,8 +34,8 @@ import {
   GIO_CASE_REASONS,
   INSURANCE_TYPES,
   APPROVAL_ORIGINATING_OFFICE_TYPE_OPTIONS,
-  DISTRICT_OFFICES,
   MOTOR_VEHICLE_TYPES,
+  officeListForType,
 } from "@/lib/roleConfig";
 import {
   registerApprovalCase,
@@ -47,18 +47,6 @@ import ExistingClaimAlert from "@/components/claims/ExistingClaimAlert";
 import api from "@/api/api";
 
 const REASON_OPTIONS = GIO_CASE_REASONS || [];
-
-function officeListForType(type) {
-  const key = (type || "").replace(/\s+/g, "_");
-  switch (key) {
-    case "District_Office":
-      return DISTRICT_OFFICES || [];
-    case "Head_Office":
-      return ["Head Office"];
-    default:
-      return [];
-  }
-}
 
 function StepBadge({ n, color }) {
   return (
