@@ -48,3 +48,26 @@ export const updateSettings = async (req, res, next) => {
     next(error);
   }
 };
+
+export const getPublicSettings = async (req, res, next) => {
+  try {
+    const s = await prisma.systemSettings.findFirst({
+      where: { key: "singleton" },
+    });
+    res.json({
+      success: true,
+      data: {
+        system_name: s?.system_name ?? "EIC Claim Management System",
+        organization_name: s?.organization_name,
+        timezone: s?.timezone,
+        date_format: s?.date_format,
+        sec_min_password_length: s?.sec_min_password_length ?? 8,
+        sec_require_uppercase: s?.sec_require_uppercase ?? true,
+        sec_require_number: s?.sec_require_number ?? true,
+        sec_require_special_char: s?.sec_require_special_char ?? false,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+};

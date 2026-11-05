@@ -7,6 +7,7 @@ import {
   updateStaffStatus,
   resetStaffPassword,
   deleteStaffMember,
+  lookupStaff,
 } from "../controllers/staffController.js";
 import { protect } from "../middleware/auth.js";
 import { authorize } from "../middleware/authorize.js";
@@ -15,54 +16,34 @@ const router = express.Router();
 
 router.use(protect);
 
-// READ — any logged-in role that needs names / lookups
+// Full staff directory — ADMIN ONLY (VAPT Critical)
+router.get("/", authorize("admin"), getStaffMembers);
+
+// Limited lookup — before /:id
 router.get(
-  "/",
+  "/lookup",
   authorize(
     "admin",
     "secretary",
+    "claim_adjuster",
+    "gio_principal_claim_officer",
+    "principal_claim_officer",
     "claim_manager",
     "gio_claim_manager",
     "director",
+    "senior_director",
     "chief_of_gio",
     "ceo",
-    "claim_adjuster",
-    "principal_claim_officer",
-    "surveyor",
   ),
-  getStaffMembers,
+  lookupStaff,
 );
 
-router.get(
-  "/:id",
-  authorize(
-    "admin",
-    "secretary",
-    "claim_manager",
-    "gio_claim_manager",
-    "director",
-    "chief_of_gio",
-    "ceo",
-    "claim_adjuster",
-    "principal_claim_officer",
-    "surveyor",
-  ),
-  getStaffMember,
-);
+router.get("/:id", authorize("admin"), getStaffMember);
 
-// WRITE — restricted
-router.post("/", authorize("admin", "secretary"), createStaffMember);
-
-router.put("/:id", authorize("admin", "secretary"), updateStaffMember);
-
+router.post("/", authorize("admin"), createStaffMember);
+router.put("/:id", authorize("admin"), updateStaffMember);
 router.delete("/:id", authorize("admin"), deleteStaffMember);
-
-router.patch("/:id/status", authorize("admin", "secretary"), updateStaffStatus);
-
-router.patch(
-  "/:id/reset-password",
-  authorize("admin", "secretary"),
-  resetStaffPassword,
-);
+router.patch("/:id/status", authorize("admin"), updateStaffStatus);
+router.patch("/:id/reset-password", authorize("admin"), resetStaffPassword);
 
 export default router;

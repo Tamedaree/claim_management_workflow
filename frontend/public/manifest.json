@@ -1,0 +1,10 @@
+{
+  "name": "EIC Claim Management Workflow Automation System",
+  "short_name": "EIC Claims",
+  "description": "Employee and claim workflow management system of Ethiopia Insurance Corporation.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#1e3a8a"
+}

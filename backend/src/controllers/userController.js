@@ -336,3 +336,39 @@ export const deleteUser = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Limited user list for assignee dropdowns (no lockout metadata)
+// @route   GET /api/users/lookup
+export const lookupUsers = async (req, res, next) => {
+  try {
+    const { role, department } = req.query;
+
+    const where = { is_active: true };
+    if (role) where.role = role;
+    if (department) where.department = department;
+
+    const users = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        email: true,
+        role: true,
+        department: true,
+        position_title: true,
+        // no failed_login_attempts, locked_until, phone if you want stricter
+      },
+      orderBy: { email: "asc" },
+      take: 200,
+    });
+
+    const data = await withStaffNamesMany(users);
+
+    res.json({
+      success: true,
+      count: data.length,
+      data,
+    });
+  } catch (error) {
+    next(error);
+  }
+};

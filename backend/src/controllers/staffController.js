@@ -339,3 +339,39 @@ export const deleteStaffMember = async (req, res, next) => {
     next(error);
   }
 };
+
+// @desc    Limited staff list for name lookups
+// @route   GET /api/staff/lookup
+export const lookupStaff = async (req, res, next) => {
+  try {
+    const { role, department, status } = req.query;
+
+    const where = { status: status || "Active" };
+    if (role) where.role = role;
+    if (department) where.department = department;
+
+    const staff = await prisma.staffMember.findMany({
+      where,
+      select: {
+        id: true,
+        email: true,
+        first_name: true,
+        middle_name: true,
+        last_name: true,
+        role: true,
+        department: true,
+        // no employee_id, phone, notes, joining_date for general callers
+      },
+      orderBy: [{ first_name: "asc" }, { last_name: "asc" }],
+      take: 200,
+    });
+
+    res.json({
+      success: true,
+      count: staff.length,
+      data: staff,
+    });
+  } catch (error) {
+    next(error);
+  }
+};
