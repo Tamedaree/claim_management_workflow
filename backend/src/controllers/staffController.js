@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import prisma from "../config/db.js";
 import ApiError from "../utils/ApiError.js";
+import { assertPasswordPolicy } from "../utils/passwordPolicy.js";
 
 // @desc    Get all staff members
 // @route   GET /api/staff
@@ -103,6 +104,7 @@ export const createStaffMember = async (req, res, next) => {
     if (existingUser) {
       throw new ApiError(400, "A login account with this email already exists");
     }
+    await assertPasswordPolicy(password);
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
@@ -255,9 +257,10 @@ export const resetStaffPassword = async (req, res, next) => {
   try {
     const { password } = req.body;
 
-    if (!password || password.length < 8) {
-      throw new ApiError(400, "Password must be at least 8 characters");
+    if (!password) {
+      throw new ApiError(400, "Password is required");
     }
+    await assertPasswordPolicy(password);
 
     const staff = await prisma.staffMember.findUnique({
       where: { id: req.params.id },

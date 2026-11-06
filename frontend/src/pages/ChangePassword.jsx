@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSearchParams, Link } from "react-router-dom";
 import api from "@/api/api";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,29 @@ function Rule({ ok, text }) {
   );
 }
 
+function hasSequentialChars(password, run = 4) {
+  const s = (password || "").toLowerCase();
+  const rows = [
+    "abcdefghijklmnopqrstuvwxyz",
+    "zyxwvutsrqponmlkjihgfedcba",
+    "0123456789",
+    "9876543210",
+    "qwertyuiop",
+    "asdfghjkl",
+    "zxcvbnm",
+  ];
+  for (const row of rows) {
+    for (let i = 0; i <= row.length - run; i++) {
+      if (s.includes(row.slice(i, i + run))) return true;
+    }
+  }
+  return false;
+}
+
+function hasRepeatedCharRun(password) {
+  return /(.)\1{2,}/.test(password || "");
+}
+
 export default function ChangePassword() {
   const [searchParams] = useSearchParams();
   const forced =
@@ -52,16 +75,47 @@ export default function ChangePassword() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
+  const [policy, setPolicy] = useState({
+    minLength: 10,
+    requireUppercase: true,
+    requireNumber: true,
+    requireSpecial: true,
+    requireLowercase: true,
+  });
+
+  useEffect(() => {
+    api
+      .get("/settings/public")
+      .then((res) => {
+        const d = res.data?.data || {};
+        setPolicy({
+          minLength: d.sec_min_password_length ?? 10,
+          requireUppercase: d.sec_require_uppercase ?? true,
+          requireNumber: d.sec_require_number ?? true,
+          requireSpecial: d.sec_require_special_char ?? true,
+          requireLowercase: true,
+        });
+      })
+      .catch(() => {});
+  }, []);
+
   const updateField = (key, value) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     setError("");
   };
 
   const rules = {
-    length: form.newPassword.length >= 8,
-    upper: /[A-Z]/.test(form.newPassword),
-    lower: /[a-z]/.test(form.newPassword),
-    number: /[0-9]/.test(form.newPassword),
+    length: form.newPassword.length >= policy.minLength,
+    upper: !policy.requireUppercase || /[A-Z]/.test(form.newPassword),
+    lower: !policy.requireLowercase || /[a-z]/.test(form.newPassword),
+    number: !policy.requireNumber || /[0-9]/.test(form.newPassword),
+    special: !policy.requireSpecial || /[^A-Za-z0-9]/.test(form.newPassword),
+    noSequence: form.newPassword.length
+      ? !hasSequentialChars(form.newPassword, 4)
+      : false,
+    noRepeat: form.newPassword.length
+      ? !hasRepeatedCharRun(form.newPassword)
+      : false,
     match:
       form.newPassword.length > 0 && form.newPassword === form.confirmPassword,
     different:
@@ -70,13 +124,15 @@ export default function ChangePassword() {
       form.currentPassword !== form.newPassword,
   };
 
-  // Optionally require upper/lower/number for forced policy
   const canSubmit =
-    form.currentPassword &&
+    !!form.currentPassword &&
     rules.length &&
     rules.upper &&
     rules.lower &&
     rules.number &&
+    rules.special &&
+    rules.noSequence &&
+    rules.noRepeat &&
     rules.match &&
     rules.different &&
     !saving;
@@ -203,10 +259,26 @@ export default function ChangePassword() {
         </div>
 
         <div className="rounded-xl border bg-muted/40 p-3 space-y-1.5">
-          <Rule ok={rules.length} text="At least 8 characters" />
-          <Rule ok={rules.upper} text="One uppercase letter" />
+          <Rule
+            ok={rules.length}
+            text={`At least ${policy.minLength} characters`}
+          />
           <Rule ok={rules.lower} text="One lowercase letter" />
-          <Rule ok={rules.number} text="One number" />
+          {policy.requireUppercase && (
+            <Rule ok={rules.upper} text="One uppercase letter" />
+          )}
+          {policy.requireNumber && <Rule ok={rules.number} text="One number" />}
+          {policy.requireSpecial && (
+            <Rule ok={rules.special} text="One special character (!@#$%&*)" />
+          )}
+          <Rule
+            ok={rules.noSequence}
+            text="No sequential characters (abcd, 1234, qwer…)"
+          />
+          <Rule
+            ok={rules.noRepeat}
+            text="No 3+ repeated characters (aaa, 111…)"
+          />
           <Rule ok={rules.match} text="Passwords match" />
           <Rule ok={rules.different} text="Different from current password" />
         </div>

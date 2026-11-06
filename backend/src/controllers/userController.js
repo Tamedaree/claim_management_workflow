@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import prisma from "../config/db.js";
 import ApiError from "../utils/ApiError.js";
+import { assertPasswordPolicy } from "../utils/passwordPolicy.js";
 
 async function withStaffNames(user) {
   if (!user) return user;
@@ -165,6 +166,8 @@ export const createUser = async (req, res, next) => {
     if (existing) {
       throw new ApiError(400, "User with this email already exists");
     }
+
+    await assertPasswordPolicy(password);
 
     const hashedPassword = await bcrypt.hash(password, 12);
 

@@ -28,6 +28,30 @@ export const updateSettings = async (req, res, next) => {
     delete data.key;
     delete data.updatedAt;
 
+    // Password policy bounds (production-safe)
+    if (data.sec_min_password_length != null) {
+      const n = Number(data.sec_min_password_length);
+      if (!Number.isFinite(n) || n < 8 || n > 128) {
+        throw new ApiError(
+          400,
+          "Minimum password length must be between 8 and 128",
+        );
+      }
+      data.sec_min_password_length = Math.floor(n);
+    }
+    if (data.sec_max_failed_attempts != null) {
+      const n = Number(data.sec_max_failed_attempts);
+      if (!Number.isFinite(n) || n < 3 || n > 20) {
+        throw new ApiError(400, "Max failed attempts must be between 3 and 20");
+      }
+    }
+    if (data.sec_lockout_minutes != null) {
+      const n = Number(data.sec_lockout_minutes);
+      if (!Number.isFinite(n) || n < 1 || n > 1440) {
+        throw new ApiError(400, "Lockout minutes must be between 1 and 1440");
+      }
+    }
+
     const updated = await prisma.systemSettings.upsert({
       where: { key: "singleton" },
       update: {
@@ -61,10 +85,10 @@ export const getPublicSettings = async (req, res, next) => {
         organization_name: s?.organization_name,
         timezone: s?.timezone,
         date_format: s?.date_format,
-        sec_min_password_length: s?.sec_min_password_length ?? 8,
+        sec_min_password_length: s?.sec_min_password_length ?? 10,
         sec_require_uppercase: s?.sec_require_uppercase ?? true,
         sec_require_number: s?.sec_require_number ?? true,
-        sec_require_special_char: s?.sec_require_special_char ?? false,
+        sec_require_special_char: s?.sec_require_special_char ?? true,
       },
     });
   } catch (error) {

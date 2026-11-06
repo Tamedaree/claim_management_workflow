@@ -5,6 +5,7 @@ import { generateToken } from "../utils/generateToken.js";
 import ApiError from "../utils/ApiError.js";
 import { setAuditActor } from "../middleware/auditContext.js";
 import { notifyAdmins } from "../utils/notifyAdmins.js";
+import { assertPasswordPolicy } from "../utils/passwordPolicy.js";
 
 // @desc    Register new user
 // @route   POST /api/auth/register
@@ -23,6 +24,8 @@ export const register = async (req, res, next) => {
     if (!email || !password) {
       throw new ApiError(400, "Email and password are required");
     }
+
+    await assertPasswordPolicy(password);
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
@@ -253,9 +256,7 @@ export const changePassword = async (req, res, next) => {
       throw new ApiError(400, "Current password and new password are required");
     }
 
-    if (newPassword.length < 8) {
-      throw new ApiError(400, "New password must be at least 8 characters");
-    }
+    await assertPasswordPolicy(newPassword);
 
     const user = await prisma.user.findUnique({
       where: { id: userId },
@@ -352,9 +353,10 @@ export const uploadProfileImage = async (req, res, next) => {
 export const resetStaffPassword = async (req, res, next) => {
   try {
     const { password } = req.body; // temp password from admin UI
-    if (!password || password.length < 8) {
-      throw new ApiError(400, "Password must be at least 8 characters");
+    if (!password) {
+      throw new ApiError(400, "Password is required");
     }
+    await assertPasswordPolicy(password);
 
     const hashed = await bcrypt.hash(password, 12);
 
