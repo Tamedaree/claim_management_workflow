@@ -16,7 +16,7 @@ import { ROLE_LABELS } from "@/lib/roleConfig";
 import ThemeToggle from "@/components/theme/ThemeToggle";
 import { useAuth } from "@/lib/AuthContext";
 
-const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "";
 
 function getAvatarUrl(pathOrUrl) {
   if (!pathOrUrl) return null;

@@ -20,7 +20,7 @@ import {
 } from "lucide-react";
 import { ROLE_LABELS } from "@/lib/roleConfig";
 
-const API_ORIGIN = "http://localhost:5000";
+const API_ORIGIN = "";
 
 function getAvatarUrl(pathOrUrl) {
   if (!pathOrUrl) return null;
