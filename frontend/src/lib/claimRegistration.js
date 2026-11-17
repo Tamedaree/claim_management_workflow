@@ -108,26 +108,14 @@ export async function checkExistingClaim(
   );
 }
 async function resolveSubmitterName(user) {
-  let submitterName = user?.full_name || user?.email || "Unknown";
-  try {
-    if (user?.email) {
-      const staffRes = await api.get(
-        `/staff?email=${encodeURIComponent(user.email)}`,
-      );
-      const staff = staffRes.data.data || [];
-      if (staff.length > 0) {
-        const s = staff[0];
-        submitterName =
-          [s.first_name, s.middle_name].filter(Boolean).join(" ") ||
-          s.first_name ||
-          user?.full_name ||
-          "Unknown";
-      }
-    }
-  } catch {
-    // keep fallback
-  }
-  return submitterName;
+  if (!user) return "Unknown";
+
+  const fromParts = [user.first_name, user.middle_name, user.last_name]
+    .filter(Boolean)
+    .join(" ")
+    .trim();
+
+  return user.full_name?.trim() || fromParts || user.email || "Unknown";
 }
 
 export async function registerClaim(
@@ -209,7 +197,7 @@ export async function registerClaim(
     const nextStageName = "Claim Review & Assignment";
 
     // load claim managers
-    const usersRes = await api.get("/users?role=claim_manager");
+    const usersRes = await api.get("/users/lookup?role=claim_manager");
     const list = usersRes.data?.data || [];
     const nextOwnerId = list[0]?.id || null;
     const nextOwnerName = list[0]?.full_name || list[0]?.email || null;
@@ -416,7 +404,7 @@ export async function registerGioCase(form, user, { asDraft = false } = {}) {
       if (!nextOwnerId) {
         try {
           const usersRes = await api.get(
-            `/users?role=${next.responsible_role}`,
+            `/users/lookup?role=${encodeURIComponent(next.responsible_role)}`,
           );
           const list = usersRes.data.data || [];
           if (list.length > 0) {
@@ -595,7 +583,7 @@ export async function registerApprovalCase(
 
   if (!directorId) {
     try {
-      const usersRes = await api.get("/users?role=director");
+      const usersRes = await api.get("/users/lookup?role=director");
       const list = usersRes.data?.data || usersRes.data || [];
       if (list[0]) {
         directorId = list[0].id;
