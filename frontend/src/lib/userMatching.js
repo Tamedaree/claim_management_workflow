@@ -6,7 +6,7 @@ import api from "@/api/api";
  */
 export async function findApproversByRoleAndLocation(systemRole, claim) {
   try {
-    const res = await api.get(`/users?role=${encodeURIComponent(systemRole)}`);
+    const res = await api.get(`/users/lookup?role=${encodeURIComponent(systemRole)}`);
     let users = res.data?.data ?? res.data ?? [];
     if (!Array.isArray(users)) users = [];
 

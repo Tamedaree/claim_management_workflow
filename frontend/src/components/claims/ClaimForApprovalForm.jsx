@@ -341,7 +341,7 @@ export default function ClaimForApprovalForm({ user }) {
 
   useEffect(() => {
     api
-      .get("/users?role=director")
+      .get("/users/lookup?role=director")
       .then((res) => {
         const list = res.data?.data || res.data || [];
         setDirectors(Array.isArray(list) ? list : []);

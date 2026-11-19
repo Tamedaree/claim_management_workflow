@@ -129,7 +129,7 @@ export default function GioCaseTimeline({ claim, user, onActivityUpdated }) {
         const role = needsManagerAssign
           ? "gio_claim_manager"
           : "gio_principal_claim_officer";
-        const res = await api.get(`/users?role=${role}`);
+        const res = await api.get(`/users/lookup?role=${role}`);
         const list = (res.data.data || []).filter((u) => u.is_active !== false);
         if (!cancelled) setAdjusters(list);
       } catch {

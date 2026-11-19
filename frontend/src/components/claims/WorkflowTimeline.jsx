@@ -508,7 +508,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     try {
       let list = [];
       try {
-        const res = await api.get("/users?role=principal_claim_officer");
+        const res = await api.get("/users/lookup?role=principal_claim_officer");
         list = res.data?.data ?? res.data ?? [];
       } catch {
         list = [];
@@ -539,7 +539,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     try {
       let list = [];
       try {
-        const res = await api.get("/users?role=claim_adjuster");
+        const res = await api.get("/users/lookup?role=claim_adjuster");
         list = res.data?.data ?? res.data ?? [];
       } catch {
         list = [];
