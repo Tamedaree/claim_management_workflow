@@ -204,6 +204,19 @@ const isPrincipalAssignStageName = (name = "") => {
   );
 };
 
+const isManagerAssignStageName = (name = "") => {
+  const n = name.toLowerCase();
+  return (
+    n.includes("Director Assignment") ||
+    n.includes("Director Assignment") ||
+    n.includes("Director assigns") ||
+    n.includes("Director review") ||
+    n.includes("Director decision") ||
+    n.includes("Director assignment") ||
+    name === "Director Assignment"
+  );
+};
+
 const isSurveyRequestStage = (name = "") => {
   const n = (name || "").toLowerCase();
   return (
@@ -322,8 +335,10 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
   const [reviewDate, setReviewDate] = useState("");
   const [adjusters, setAdjusters] = useState([]);
   const [principals, setPrincipals] = useState([]);
+  const [manager, setManager] = useState([]);
   const [selectedAdjusterId, setSelectedAdjusterId] = useState("");
   const [selectedPrincipalId, setSelectedPrincipalId] = useState("");
+  const [selectedManagerId, setselectedManagerId] = useState("");
   const [processing, setProcessing] = useState(false);
   const [completionChoice, setCompletionChoice] = useState("forward");
   const [actingUserName, setActingUserName] = useState(null);
@@ -535,6 +550,32 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     }
   };
 
+  const loadManagers = async () => {
+    try {
+      let list = [];
+      try {
+        const res = await api.get("/users/lookup?role=claim_manager");
+        list = res.data?.data ?? res.data ?? [];
+      } catch {
+        list = [];
+      }
+      if (!Array.isArray(list) || list.length === 0) {
+        const resAll = await api.get("/users");
+        const all = resAll.data?.data ?? resAll.data ?? [];
+        list = (Array.isArray(all) ? all : []).filter(
+          (u) => u.role === "claim_manager",
+        );
+      }
+      const active = (Array.isArray(list) ? list : []).filter(
+        (u) => u.is_active !== false,
+      );
+      setManager(await attachStaffNames(active));
+    } catch (err) {
+      console.error("Load manager failed", err);
+      setManager([]);
+    }
+  };
+
   const loadAdjusters = async () => {
     try {
       let list = [];
@@ -622,6 +663,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     setSelectedPrincipalId(
       activity?.registration_data?.principal_of_claim_id || "",
     );
+    setselectedManagerId(
+      activity?.registration_data?.manager_of_claim_id || "",
+    );
     setCompletionChoice("forward");
 
     // Closure: prefer activity data; else claim-level recovery flags
@@ -662,6 +706,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
 
     if (isAdjusterAssignStage(stage.stage_name)) await loadAdjusters();
     if (isPrincipalAssignStageName(stage.stage_name)) await loadPrincipals();
+    if (isManagerAssignStageName(stage.stage_name)) await loadManagers();
   };
 
   const openReturnModal = (stage) => {
@@ -981,6 +1026,10 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
     actionModal?.stage &&
     isPrincipalAssignStageName(actionModal.stage.stage_name);
 
+  const isManagerAssignStage =
+    actionModal?.stage &&
+    isManagerAssignStageName(actionModal.stage.stage_name);
+
   /** Match API/DB stage names to ESCALATION_CHAINS keys */
   const resolveEscalationStageName = (name) => {
     if (!name) return null;
@@ -1246,6 +1295,17 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
           manager_comments: comments || "",
         };
       }
+      if (isManagerAssignStage) {
+        const selectedManager = manager.find((p) => p.id === selectedManagerId);
+
+        registrationData = {
+          ...registrationData,
+          manager_of_claim_id: selectedManagerId || "",
+          manager_name:
+            selectedManager?.full_name || selectedManager?.email || "",
+          director_comments: comments || "",
+        };
+      }
       if (isEscalationStage(stage.stage_name) && uiStatus === "Completed") {
         registrationData.approvals = [
           ...(registrationData.approvals || []),
@@ -1343,6 +1403,10 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
         principals.find((p) => p.id === selectedPrincipalId)?.full_name ||
         principals.find((p) => p.id === selectedPrincipalId)?.email ||
         "";
+      const managerName =
+        manager.find((p) => p.id === selectedManagerId)?.full_name ||
+        manager.find((p) => p.id === selectedManagerId)?.email ||
+        "";
       const adjusterName =
         adjusters.find((a) => a.id === selectedAdjusterId)?.full_name ||
         adjusters.find((a) => a.id === selectedAdjusterId)?.email ||
@@ -1362,6 +1426,9 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             : "") +
           (isPrincipalAssignStage && principalName
             ? ` · Principal: ${principalName}`
+            : "") +
+          (isManagerAssignStage && managerName
+            ? ` · Manager: ${managerName}`
             : "") +
           (isAssignmentStage && adjusterName
             ? ` · Adjuster: ${adjusterName}`
@@ -1442,6 +1509,24 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
             workflow_stage_order: nextStage?.stage_order || stage.stage_order,
             current_owner_id: selectedPrincipalId,
             current_owner_name: principal?.full_name || principal?.email || "",
+            current_department: nextStage?.department || stage.department,
+            current_approver_role: "None",
+            ...(!claimHasFinalStatus && { status: mappedStatus }),
+            ...(claimAmountFromBids != null && {
+              claim_amount: claimAmountFromBids,
+            }),
+          });
+        } else if (isManagerAssignStage && selectedManagerId) {
+          const selectedManager = manager.find(
+            (p) => p.id === selectedManagerId,
+          );
+
+          await api.put(`/claims/${claim.id}`, {
+            workflow_stage: nextStage?.stage_name || stage.stage_name,
+            workflow_stage_order: nextStage?.stage_order || stage.stage_order,
+            current_owner_id: selectedManagerId,
+            current_owner_name:
+              selectedManager?.full_name || selectedManager?.email || "",
             current_department: nextStage?.department || stage.department,
             current_approver_role: "None",
             ...(!claimHasFinalStatus && { status: mappedStatus }),
@@ -1571,6 +1656,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
       setReviewDate("");
       setSelectedAdjusterId("");
       setSelectedPrincipalId("");
+      setselectedManagerId("");
       setCompletionChoice("forward");
       setStageData({});
       await loadData();
@@ -1953,6 +2039,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
           setReviewDate("");
           setSelectedAdjusterId("");
           setSelectedPrincipalId("");
+          setselectedManagerId("");
           setCompletionChoice("forward");
           setStageData({});
         }}
@@ -2060,6 +2147,38 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
               </div>
             )}
 
+            {isManagerAssignStage && (
+              <div className="space-y-3 p-3 bg-violet-50/50 rounded-lg border border-violet-100">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <User className="w-4 h-4 text-violet-600" /> Claim Manager
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Select Claim Manager</Label>
+                  <Select
+                    value={selectedManagerId}
+                    onValueChange={setselectedManagerId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select Claim Manager..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {manager.length === 0 ? (
+                        <SelectItem value="_none" disabled>
+                          No Claim Manager found
+                        </SelectItem>
+                      ) : (
+                        manager.map((p) => (
+                          <SelectItem key={p.id} value={p.id}>
+                            {p.full_name || p.email}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+
             {actionModal?.stage &&
               STAGE_FIELD_CONFIG[actionModal.stage.stage_name] && (
                 <StageRegistrationForm
@@ -2147,6 +2266,7 @@ export default function WorkflowTimeline({ claim, user, onActivityUpdated }) {
                 setReviewDate("");
                 setSelectedAdjusterId("");
                 setSelectedPrincipalId("");
+                setselectedManagerId("");
                 setCompletionChoice("forward");
                 setStageData({});
               }}
