@@ -409,13 +409,7 @@ export const APPROVAL_ORIGINATING_OFFICE_TYPE_OPTIONS =
 export const CLAIM_DIVISION_ORIGINATING_OFFICE_TYPE_OPTIONS =
   ORIGINATING_OFFICE_TYPE_OPTIONS.filter((o) => o.value !== "Service_Center");
 
-const KEFLA_EXCLUDED_DISTRICTS = new Set([
-  "North West District",
-  "South East District",
-]);
-
 export const KEFLA_AGER_BRANCHES = Object.entries(DISTRICT_BRANCHES_BY_DISTRICT)
-  .filter(([district]) => !KEFLA_EXCLUDED_DISTRICTS.has(district))
   .flatMap(([, branches]) => branches)
   .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
 
