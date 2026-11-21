@@ -196,6 +196,18 @@ function hasDamageAssessmentRequest(rd = {}) {
   return false;
 }
 
+function normalizeVehicleCondition(v) {
+  const s = String(v || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
+  if (s === "drivable") return "Drivable";
+  if (s === "non_drivable" || s === "nondrivable" || s === "non-drivable")
+    return "Non_Drivable";
+  if (!s || s === "—" || s === "-") return "Other";
+  return "Other";
+}
+
 function buildDamageAssessmentRows(claims, activities) {
   const byClaim = {};
   for (const a of activities) {
@@ -235,9 +247,7 @@ function buildDamageAssessmentRows(claims, activities) {
         : "—",
       originating_office: c.originating_office || "—",
       towed_to_rtc_date: rd.towed_to_rtc_date || "—",
-      vehicle_condition: rd.vehicle_condition
-        ? String(rd.vehicle_condition).replace(/_/g, " ")
-        : "—",
+      vehicle_condition: normalizeVehicleCondition(rd.vehicle_condition),
       internal_survey_request: rd.internal_survey_request || "—",
       internal_survey_date: rd.internal_survey_date || "—",
       damage_assessment_request_date: rd.damage_assessment_request_date || "—",
@@ -249,6 +259,10 @@ function buildDamageAssessmentRows(claims, activities) {
             : independent || "—",
       assessment_requested: requested ? "Yes" : "No",
       stage_status: act.status || "—",
+      // keep display label separate if you want:
+      vehicle_condition_label: normalizeVehicleCondition(
+        rd.vehicle_condition,
+      ).replace(/_/g, " "),
     });
   }
 
@@ -272,6 +286,10 @@ export default function Reports() {
   const [page, setPage] = useState(1);
   const [reportType, setReportType] = useState("tracking");
   const [linkFlag, setLinkFlag] = useState("recovery");
+  const [daVehicleFilter, setDaVehicleFilter] = useState("all");
+  const [daSortKey, setDaSortKey] = useState("claim_reference");
+  const [daSortDir, setDaSortDir] = useState("asc");
+  const [daPage, setDaPage] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -429,6 +447,25 @@ export default function Reports() {
 
     return rows;
   }, [activeClaims, sortKey, sortDir, nameByEmail]);
+
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else {
+      setSortKey(key);
+      setSortDir(key === "days" ? "desc" : "asc");
+    }
+    setPage(1);
+  };
+
+  const totalPages = Math.max(
+    1,
+    Math.ceil(pendingDelayedRows.length / PAGE_SIZE),
+  );
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const startIdx = (safePage - 1) * PAGE_SIZE;
+  const pageRows = pendingDelayedRows.slice(startIdx, startIdx + PAGE_SIZE);
+  const showingFrom = pendingDelayedRows.length === 0 ? 0 : startIdx + 1;
+  const showingTo = Math.min(startIdx + PAGE_SIZE, pendingDelayedRows.length);
 
   const trendData = useMemo(() => {
     const map = {};
@@ -624,30 +661,74 @@ export default function Reports() {
     const requested = damageAssessmentRows.filter(
       (r) => r.assessment_requested === "Yes",
     ).length;
+    const drivable = damageAssessmentRows.filter(
+      (r) => r.vehicle_condition === "Drivable",
+    ).length;
+    const nonDrivable = damageAssessmentRows.filter(
+      (r) => r.vehicle_condition === "Non_Drivable",
+    ).length;
+    const other = total - drivable - nonDrivable;
     return {
       total,
       requested,
       notRequested: total - requested,
+      drivable,
+      nonDrivable,
+      other,
     };
   }, [damageAssessmentRows]);
 
-  const totalPages = Math.max(
-    1,
-    Math.ceil(pendingDelayedRows.length / PAGE_SIZE),
-  );
-  const safePage = Math.min(Math.max(1, page), totalPages);
-  const startIdx = (safePage - 1) * PAGE_SIZE;
-  const pageRows = pendingDelayedRows.slice(startIdx, startIdx + PAGE_SIZE);
-  const showingFrom = pendingDelayedRows.length === 0 ? 0 : startIdx + 1;
-  const showingTo = Math.min(startIdx + PAGE_SIZE, pendingDelayedRows.length);
-
-  const toggleSort = (key) => {
-    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
-    else {
-      setSortKey(key);
-      setSortDir(key === "days" ? "desc" : "asc");
+  const damageAssessmentFiltered = useMemo(() => {
+    let rows = damageAssessmentRows;
+    if (daVehicleFilter === "Drivable") {
+      rows = rows.filter((r) => r.vehicle_condition === "Drivable");
+    } else if (daVehicleFilter === "Non_Drivable") {
+      rows = rows.filter((r) => r.vehicle_condition === "Non_Drivable");
+    } else if (daVehicleFilter === "other") {
+      rows = rows.filter(
+        (r) =>
+          r.vehicle_condition !== "Drivable" &&
+          r.vehicle_condition !== "Non_Drivable",
+      );
     }
-    setPage(1);
+    return rows;
+  }, [damageAssessmentRows, daVehicleFilter]);
+
+  const damageAssessmentSorted = useMemo(() => {
+    const dir = daSortDir === "asc" ? 1 : -1;
+    const key = daSortKey;
+    return [...damageAssessmentFiltered].sort((a, b) => {
+      const av = String(a[key] ?? "").toLowerCase();
+      const bv = String(b[key] ?? "").toLowerCase();
+      return dir * av.localeCompare(bv, undefined, { numeric: true });
+    });
+  }, [damageAssessmentFiltered, daSortKey, daSortDir]);
+
+  const daTotalPages = Math.max(
+    1,
+    Math.ceil(damageAssessmentSorted.length / PAGE_SIZE),
+  );
+  const daSafePage = Math.min(Math.max(1, daPage), daTotalPages);
+  const daStartIdx = (daSafePage - 1) * PAGE_SIZE;
+  const daPageRows = damageAssessmentSorted.slice(
+    daStartIdx,
+    daStartIdx + PAGE_SIZE,
+  );
+  const daShowingFrom =
+    damageAssessmentSorted.length === 0 ? 0 : daStartIdx + 1;
+  const daShowingTo = Math.min(
+    daStartIdx + PAGE_SIZE,
+    damageAssessmentSorted.length,
+  );
+
+  const toggleDaSort = (key) => {
+    if (daSortKey === key) {
+      setDaSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setDaSortKey(key);
+      setDaSortDir("asc");
+    }
+    setDaPage(1);
   };
 
   const streamLabel =
@@ -1209,6 +1290,8 @@ export default function Reports() {
           value={period}
           onValueChange={(v) => {
             setPeriod(v);
+            setDaVehicleFilter(v);
+            setDaPage(1);
             setPage(1);
           }}
         >
@@ -1995,6 +2078,24 @@ export default function Reports() {
                 </Card>
                 <Card className="border-0 shadow-sm rounded-2xl">
                   <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">Drivable</p>
+                    <p className="text-2xl font-bold tracking-tight text-emerald-700">
+                      {damageAssessmentStats.drivable}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="border-0 shadow-sm rounded-2xl">
+                  <CardContent className="p-4">
+                    <p className="text-xs text-muted-foreground">
+                      Non Drivable
+                    </p>
+                    <p className="text-2xl font-bold tracking-tight text-orange-700">
+                      {damageAssessmentStats.nonDrivable}
+                    </p>
+                  </CardContent>
+                </Card>
+                <Card className="border-0 shadow-sm rounded-2xl">
+                  <CardContent className="p-4">
                     <p className="text-xs text-muted-foreground">
                       Damage assessment requested
                     </p>
@@ -2025,6 +2126,29 @@ export default function Reports() {
                     number, office, vehicle nature, and assessment flags.
                   </p>
                 </CardHeader>
+                <div className="flex flex-wrap items-center justify-end gap-2 px-4 pt-3">
+                  <span className="text-xs text-muted-foreground">
+                    Nature of vehicle
+                  </span>
+
+                  <Select
+                    value={daVehicleFilter}
+                    onValueChange={(v) => {
+                      setDaVehicleFilter(v);
+                      setDaPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-44 h-8">
+                      <SelectValue placeholder="Filter" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="Drivable">Drivable</SelectItem>
+                      <SelectItem value="Non_Drivable">Non Drivable</SelectItem>
+                      <SelectItem value="other">Other / blank</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <CardContent className="overflow-x-auto p-0">
                   {damageAssessmentRows.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-10 px-4">
@@ -2036,10 +2160,37 @@ export default function Reports() {
                     <Table>
                       <TableHeader>
                         <TableRow className="bg-muted/40">
-                          <TableHead className="text-xs">Claim Ref</TableHead>
-                          <TableHead className="text-xs">Claim No.</TableHead>
+                          <TableHead className="text-xs">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 hover:text-foreground"
+                              onClick={() => toggleDaSort("claim_reference")}
+                            >
+                              Claim Ref
+                              <ArrowUpDown className="w-3 h-3 opacity-60" />
+                            </button>
+                          </TableHead>
+                          <TableHead className="text-xs">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 hover:text-foreground"
+                              onClick={() => toggleDaSort("claim_number")}
+                            >
+                              Claim No.
+                              <ArrowUpDown className="w-3 h-3 opacity-60" />
+                            </button>
+                          </TableHead>
                           <TableHead className="text-xs">Plate</TableHead>
-                          <TableHead className="text-xs">Insured</TableHead>
+                          <TableHead className="text-xs">
+                            <button
+                              type="button"
+                              className="inline-flex items-center gap-1 hover:text-foreground"
+                              onClick={() => toggleDaSort("insured")}
+                            >
+                              Insured
+                              <ArrowUpDown className="w-3 h-3 opacity-60" />
+                            </button>
+                          </TableHead>
                           <TableHead className="text-xs">Office type</TableHead>
                           <TableHead className="text-xs">Nature</TableHead>
                           <TableHead className="text-xs">
@@ -2054,7 +2205,7 @@ export default function Reports() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {damageAssessmentRows.map((r) => (
+                        {daPageRows.map((r) => (
                           <TableRow key={r.id} className="hover:bg-muted/30">
                             <TableCell className="text-xs font-medium font-mono">
                               {r.claim_reference}
@@ -2098,6 +2249,43 @@ export default function Reports() {
                         ))}
                       </TableBody>
                     </Table>
+                  )}
+                  {damageAssessmentSorted.length > 0 && (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-3 px-4 py-3 border-t">
+                      <p className="text-xs text-muted-foreground">
+                        Showing {daShowingFrom}–{daShowingTo} of{" "}
+                        {damageAssessmentSorted.length} claims
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1"
+                          disabled={daSafePage <= 1}
+                          onClick={() => setDaPage((p) => Math.max(1, p - 1))}
+                        >
+                          <ChevronLeft className="w-4 h-4" />
+                          Prev
+                        </Button>
+                        <span className="text-xs text-muted-foreground tabular-nums px-1">
+                          Page {daSafePage} of {daTotalPages}
+                        </span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1"
+                          disabled={daSafePage >= daTotalPages}
+                          onClick={() =>
+                            setDaPage((p) => Math.min(daTotalPages, p + 1))
+                          }
+                        >
+                          Next
+                          <ChevronRight className="w-4 h-4" />
+                        </Button>
+                      </div>
+                    </div>
                   )}
                 </CardContent>
               </Card>
