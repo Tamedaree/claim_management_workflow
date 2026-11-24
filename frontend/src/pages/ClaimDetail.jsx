@@ -595,8 +595,8 @@ export default function ClaimDetail() {
       <div className="flex items-start justify-between">
         <div>
           <div className="flex items-center gap-3 mb-1 flex-wrap">
-            <h1 className="text-2xl font-bold tracking-tight">
-              {claim.claim_reference}
+            <h1 className="text-2xl font-bold tracking-tight font-mono">
+              {claim.claim_number || "—"}
             </h1>
             <Badge className={`${STATUS_COLORS[claim.status] || ""}`}>
               {claim.status?.replace(/_/g, " ")}

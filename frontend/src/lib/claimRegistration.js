@@ -139,6 +139,7 @@ export async function registerClaim(
 
   const createRes = await api.post("/claims", {
     claim_reference: normalizedClaimData.claim_reference,
+    claim_number: normalizedClaimData.claim_number?.trim() || null,
     claimant_name: normalizedClaimData.claimant_name,
     insurance_type: normalizedClaimData.insurance_type,
     plate_number:

@@ -46,6 +46,21 @@ function validateNotificationForm(form) {
     errors.claim_reference = "Claim reference is required";
   } else if (ref.length < 3) {
     errors.claim_reference = "Reference must be at least 3 characters";
+  } else if (!/^[A-Za-z0-9][A-Za-z0-9\-/]*$/.test(ref)) {
+    // May start with a number (e.g. 2026-CLM-001)
+    errors.claim_reference =
+      "Letters, numbers, hyphen or slash only (may start with a number)";
+  }
+
+  // Optional Claim No
+  const cn = (form.claim_number || "").trim();
+  if (cn) {
+    if (cn.length < 3 || cn.length > 40) {
+      errors.claim_number = "Claim number must be 3–40 characters";
+    } else if (!/^[A-Za-z0-9][A-Za-z0-9\-/]*$/.test(cn)) {
+      errors.claim_number =
+        "Letters, numbers, hyphen or slash only (may start with a number)";
+    }
   }
 
   if (!form.claimant_name?.trim()) {
@@ -98,6 +113,7 @@ export default function NewClaimNotificationForm({ user }) {
 
   const [form, setForm] = useState({
     claim_reference: "",
+    claim_number: "",
     claimant_name: "",
     insurance_type: "",
     plate_number: "",
@@ -245,6 +261,17 @@ export default function NewClaimNotificationForm({ user }) {
             </div>
 
             <div className={fieldClass}>
+              <Label className={labelClass}>Claim number (optional)</Label>
+              <Input
+                className={`h-10 font-mono ${errors.claim_number ? "border-red-500" : ""}`}
+                value={form.claim_number}
+                onChange={(e) => handleChange("claim_number", e.target.value)}
+                placeholder="Business claim number"
+              />
+              <FieldError message={errors.claim_number} />
+            </div>
+
+            <div className={fieldClass}>
               <div className="flex items-center justify-between gap-2">
                 <Label className={labelClass}>Insured name *</Label>
                 <div className="inline-flex rounded-lg border bg-muted/40 p-0.5">
@@ -290,12 +317,11 @@ export default function NewClaimNotificationForm({ user }) {
                 </Select>
               ) : (
                 <Input
-                  className="h-10"
+                  className={`h-10 ${errors.claimant_name ? "border-red-500" : ""}`}
                   value={form.claimant_name}
                   onChange={(e) =>
                     handleChange("claimant_name", e.target.value)
                   }
-                  className={`h-10 ${errors.claimant_name ? "border-red-500" : ""}`}
                   placeholder="Enter insured name"
                 />
               )}
