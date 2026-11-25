@@ -1053,6 +1053,64 @@ export const GARAGE_STATUS_COLORS = {
   "Invoice Settled": "bg-teal-100 text-teal-700",
 };
 
+// ==================== STAGE COLORS (modern category style) ====================
+
+const STAGE_CATEGORY = {
+  registration: [
+    "Claim Receipt & Registration",
+    "GIO Case Registration",
+    "Claim Approval Registration",
+  ],
+  assignment: [
+    "Claim Review & Assignment",
+    "Principal Assignment to Adjuster",
+    "Director Assignment",
+    "Manager Assignment",
+  ],
+  work: [
+    "Survey & Damage Assessment Request",
+    "Survey & Damage Assessment Review",
+    "Bid / Tender Process",
+    "GIO Case Work",
+    "Claim Approval Case Work",
+    "Repair Execution & Quality Check",
+    "Discharge & Payment Preparation",
+  ],
+  review: [
+    "Decision",
+    "GIO Claim Manager Review",
+    "Claim Manager Review",
+    "Director Decision",
+    "Senior Director Decision",
+  ],
+  approval: [
+    "Work Order / Payment Authorization",
+    "Discharge & Payment Approval",
+    "Chief of GIO Approval",
+    "CEO Decision",
+  ],
+  closure: ["Closure", "GIO Case Closure", "Claim Approval Closure"],
+};
+
+const CATEGORY_COLORS = {
+  registration: "bg-blue-100 text-blue-700 border-blue-200",
+  assignment: "bg-amber-100 text-amber-700 border-amber-200",
+  work: "bg-indigo-100 text-indigo-700 border-indigo-200",
+  review: "bg-orange-100 text-orange-700 border-orange-200",
+  approval: "bg-purple-100 text-purple-700 border-purple-200",
+  closure: "bg-emerald-100 text-emerald-700 border-emerald-200",
+};
+
+/** Returns Tailwind classes for a workflow stage badge */
+export function getStageColor(stageName) {
+  if (!stageName) return "bg-muted text-muted-foreground border-border";
+  const name = String(stageName).trim();
+  for (const [category, stages] of Object.entries(STAGE_CATEGORY)) {
+    if (stages.includes(name)) return CATEGORY_COLORS[category];
+  }
+  return "bg-muted text-muted-foreground border-border";
+}
+
 export function getClaimAging(claim) {
   if (!claim.submission_date) return 0;
   return moment().diff(moment(claim.submission_date), "days");

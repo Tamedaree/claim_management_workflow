@@ -61,6 +61,7 @@ import {
   CLAIM_DIVISION_STATUS_LIST,
   GIO_STATUS_LIST,
   getStageDescription,
+  getStageColor,
 } from "@/lib/roleConfig";
 import EditClaimDialog from "@/components/claims/EditClaimDialog";
 import ExportButton from "@/components/ExportButton";
@@ -890,7 +891,9 @@ export default function AllClaims() {
                         {claim.workflow_stage ? (
                           <Badge
                             variant="outline"
-                            className="block max-w-full truncate text-xs font-normal"
+                            className={`block max-w-full truncate text-xs font-normal ${getStageColor(
+                              claim.workflow_stage,
+                            )}`}
                             title={
                               getStageDescription(claim.workflow_stage) ||
                               claim.workflow_stage.replace(/_/g, " ")
