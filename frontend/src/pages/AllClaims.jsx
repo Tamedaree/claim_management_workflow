@@ -706,21 +706,21 @@ export default function AllClaims() {
       ) : (
         <Card className="border-0 shadow-sm">
           <div className="overflow-x-auto">
-            <Table className="table-fixed min-w-[1400px]">
+            <Table className="w-[2400px] min-w-[2400px] table-fixed text-sm">
               <colgroup>
-                <col style={{ width: "44px" }} />
-                <col style={{ width: "110px" }} />
-                <col style={{ width: "110px" }} />
+                <col style={{ width: "55px" }} />
+                <col style={{ width: "230px" }} />
+                <col style={{ width: "230px" }} />
+                <col style={{ width: "240px" }} />
                 <col style={{ width: "150px" }} />
-                <col style={{ width: "80px" }} />
-                {scope === "all" && <col style={{ width: "90px" }} />}
-                {showCaseReason && <col style={{ width: "160px" }} />}
-                <col style={{ width: "100px" }} />
-                <col style={{ width: "190px" }} />
-                <col style={{ width: "120px" }} />
+                {scope === "all" && <col style={{ width: "150px" }} />}
+                {showCaseReason && <col style={{ width: "200px" }} />}
                 <col style={{ width: "170px" }} />
-                <col style={{ width: "100px" }} />
+                <col style={{ width: "270px" }} />
+                <col style={{ width: "180px" }} />
+                <col style={{ width: "200px" }} />
                 <col style={{ width: "130px" }} />
+                <col style={{ width: "150px" }} />
               </colgroup>
               <TableHeader>
                 <TableRow>
@@ -818,26 +818,37 @@ export default function AllClaims() {
                     claim.registration_type === "Claim_for_Approval";
                   const hasReason = !!claim.gio_case_reason;
                   return (
-                    <TableRow key={claim.id} className="h-11">
+                    <TableRow
+                      key={claim.id}
+                      className="h-16 transition-colors hover:bg-muted/50"
+                    >
                       <TableCell className="text-xs text-muted-foreground tabular-nums">
                         {displayIndex}
                       </TableCell>
-                      <TableCell>
+                      <TableCell className="overflow-hidden whitespace-nowrap">
                         <Link
                           to={`/claims/${claim.id}`}
-                          className="text-sm font-semibold hover:text-primary hover:underline"
+                          title={claim.claim_reference}
+                          className="block truncate text-sm font-semibold hover:text-primary hover:underline"
                         >
                           {claim.claim_reference}
                         </Link>
                       </TableCell>
-                      <TableCell className="text-sm font-mono text-muted-foreground">
-                        {claim.claim_number || "—"}
+                      <TableCell className="overflow-hidden whitespace-nowrap">
+                        <span
+                          className="block truncate text-sm font-mono text-muted-foreground"
+                          title={claim.claim_number || "—"}
+                        >
+                          {claim.claim_number || "—"}
+                        </span>
                       </TableCell>
-                      <TableCell
-                        className="text-sm truncate"
-                        title={claim.claimant_name}
-                      >
-                        {claim.claimant_name}
+                      <TableCell className="overflow-hidden whitespace-nowrap">
+                        <span
+                          className="block truncate text-sm"
+                          title={claim.claimant_name || "—"}
+                        >
+                          {claim.claimant_name || "—"}
+                        </span>
                       </TableCell>
                       <TableCell className="text-sm">
                         {claim.insurance_type}
@@ -875,11 +886,11 @@ export default function AllClaims() {
                       <TableCell className="text-sm font-mono">
                         {claim.plate_number || "—"}
                       </TableCell>
-                      <TableCell className="text-sm">
+                      <TableCell className="overflow-hidden">
                         {claim.workflow_stage ? (
                           <Badge
                             variant="outline"
-                            className="text-[10px] font-normal max-w-full truncate block"
+                            className="block max-w-full truncate text-xs font-normal"
                             title={
                               getStageDescription(claim.workflow_stage) ||
                               claim.workflow_stage.replace(/_/g, " ")
